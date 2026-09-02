@@ -75,7 +75,7 @@ const styles: Record<string, React.CSSProperties> = {
     bottom: 12,
     left: "50%",
     transform: "translateX(-50%)",
-    color: "rgba(255,255,255,0.35)",
+    color: "rgba(255,255,255,0.55)",
     fontSize: 11,
     zIndex: 12,
     pointerEvents: "none",
@@ -210,7 +210,12 @@ function placePanel(vp: Viewport): React.CSSProperties {
 }
 
 function useViewport(): Viewport {
-  const [vp, setVp] = useState<Viewport>("desktop");
+  const [vp, setVp] = useState<Viewport>(() => {
+    if (typeof window === "undefined") return "desktop";
+    if (window.matchMedia("(min-width: 1025px)").matches) return "desktop";
+    if (window.matchMedia("(min-width: 768px)").matches) return "tablet";
+    return "mobile";
+  });
   useEffect(() => {
     const mqDesktop = window.matchMedia("(min-width: 1025px)");
     const mqTablet = window.matchMedia("(min-width: 768px) and (max-width: 1024px)");

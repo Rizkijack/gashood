@@ -66,14 +66,5 @@ export const GAS_BRACKETS: GasBracket[] = [
   { min: 0.05, max: 0.1, color: "#88BB44", label: "0.05–0.1" },
   { min: 0.1, max: 0.5, color: "#CCAA22", label: "0.1–0.5" },
   { min: 0.5, max: 1.0, color: "#FF7722", label: "0.5–1.0" },
-  { min: 1.0, color: "#FF2244", label: ">1.0" },
+  { min: 1.0, color: "#FF2244", label: "≥1.0" },
 ];
-
-export function gasColor(gwei: number): string {
-  for (const b of GAS_BRACKETS) {
-    if ((b.min === undefined || gwei >= b.min) && (b.max === undefined || gwei < b.max)) {
-      return b.color;
-    }
-  }
-  return GAS_BRACKETS[0].color;
-}

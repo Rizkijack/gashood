@@ -92,7 +92,8 @@ function TxItem({ tx }: { tx: ClassifiedTransaction }) {
 
 /**
  * 4.3 — Scrollable live transaction feed.
- * New data prepends at the top; auto-scrolls back to top on new transactions.
+ * New data prepends at the top; auto-scrolls back to top ONLY when the
+ * user is already at the top — never yank the feed while they read history.
  */
 export function TxFeed() {
   const recentTxs = useGasStore((s) => s.recentTxs);
@@ -100,7 +101,8 @@ export function TxFeed() {
   const firstHash = recentTxs.length > 0 ? recentTxs[0].hash : undefined;
 
   useEffect(() => {
-    if (listRef.current) listRef.current.scrollTop = 0;
+    const el = listRef.current;
+    if (el && el.scrollTop <= 4) el.scrollTop = 0;
   }, [firstHash]);
 
   const visible = recentTxs.slice(0, MAX_RENDER);

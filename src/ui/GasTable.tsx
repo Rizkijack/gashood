@@ -108,7 +108,23 @@ export function GasTable() {
       <thead>
         <tr>
           {COLUMNS.map((c) => (
-            <th key={c.key} style={styles.th} onClick={() => toggleSort(c.key)} title={`Sort by ${c.label}`}>
+            <th
+              key={c.key}
+              style={styles.th}
+              onClick={() => toggleSort(c.key)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  toggleSort(c.key);
+                }
+              }}
+              role="button"
+              tabIndex={0}
+              aria-sort={
+                sort.key === c.key ? (sort.dir === "asc" ? "ascending" : "descending") : "none"
+              }
+              title={`Sort by ${c.label}`}
+            >
               {c.label}
               <span style={styles.sortHint}>{arrow(c.key)}</span>
             </th>

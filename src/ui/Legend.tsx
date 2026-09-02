@@ -44,7 +44,21 @@ export function Legend() {
 
   return (
     <div style={styles.card}>
-      <div style={styles.header} onClick={() => setOpen((v) => !v)} title="Toggle legend">
+      <div
+        style={styles.header}
+        onClick={() => setOpen((v) => !v)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setOpen((v) => !v);
+          }
+        }}
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        aria-label="Toggle legend"
+        title="Toggle legend"
+      >
         <span style={styles.title}>Legend</span>
         <span style={styles.toggle}>{open ? "▾" : "▸"}</span>
       </div>

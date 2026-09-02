@@ -3,6 +3,7 @@ import { OrbitControls } from "@react-three/drei";
 export function CameraController() {
   return (
     <OrbitControls
+      makeDefault
       enableDamping
       dampingFactor={0.05}
       autoRotate
