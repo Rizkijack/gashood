@@ -190,10 +190,14 @@ export function Vegetation() {
       </instancedMesh>
 
       {/* Rumput — 1 InstancedMesh 1000 blade, warna via setColorAt (3 hijau).
-          castShadow/receiveShadow false (murah). */}
+          castShadow/receiveShadow false (murah). CATATAN: TANPA prop
+          vertexColors — boxGeometry tidak punya attribute `color`, sehingga
+          USE_COLOR membuat vColor *= color(0,0,0) dan meredam instanceColor
+          (rumput jadi hitam). setColorAt bekerja via USE_INSTANCING_COLOR
+          yang independen dari vertexColors. */}
       <instancedMesh ref={grassRef} args={[undefined, undefined, GRASS_COUNT]} frustumCulled={false}>
         <boxGeometry args={[0.04, 0.35, 0.04]} />
-        <meshStandardMaterial vertexColors roughness={1} metalness={0} />
+        <meshStandardMaterial roughness={1} metalness={0} />
       </instancedMesh>
     </group>
   );
