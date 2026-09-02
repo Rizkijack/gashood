@@ -1,5 +1,20 @@
 import { Environment } from "@react-three/drei";
-import { Suspense, type ReactNode } from "react";
+import { Component, Suspense, type ReactNode } from "react";
+
+/**
+ * Environment (HDR dari CDN) bersifat opsional — kalau fetch gagal
+ * (offline/CSP/CDN down), boundary ini render null sehingga scene lokal
+ * (bangunan, ground, grid) tetap tampil tanpa collapse.
+ */
+class EnvironmentBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
 
 interface WorldProps {
   children?: ReactNode;
@@ -35,10 +50,12 @@ export function World({ children }: WorldProps) {
       {/* Subtle grid helper on top of ground */}
       <gridHelper args={[30, 30, "#1a1a2e", "#1a1a2e"]} position={[0, 0.01, 0]} />
 
-      {/* Environment map for reflections (suspends while HDR loads) */}
-      <Suspense fallback={null}>
-        <Environment preset="city" />
-      </Suspense>
+      {/* Environment map for reflections (suspends while HDR loads; optional — lihat EnvironmentBoundary) */}
+      <EnvironmentBoundary>
+        <Suspense fallback={null}>
+          <Environment preset="city" />
+        </Suspense>
+      </EnvironmentBoundary>
 
       {/* Scene content */}
       {children}

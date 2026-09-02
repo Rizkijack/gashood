@@ -75,6 +75,8 @@ async function processBlock(): Promise<boolean> {
     }
 
     store.updateMetrics(classifiedTxs, blockNumber)
+    // Bersihkan error banner setelah cycle sukses (recovery dari RPC hiccup)
+    if (store.error) store.setError(null)
     adaptInterval(true)
 
     return true
