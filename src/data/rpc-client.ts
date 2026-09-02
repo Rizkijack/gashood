@@ -28,9 +28,21 @@ export function getRpcClient(): PublicClient {
   return client
 }
 
-export async function getLatestBlock(): Promise<Block<bigint, true>> {
+export async function getBlock(blockNumber: bigint | 'latest'): Promise<Block<bigint, true>> {
   const client = getRpcClient()
-  return client.getBlock({ includeTransactions: true })
+  return client.getBlock({
+    blockNumber: blockNumber === 'latest' ? undefined : blockNumber,
+    includeTransactions: true,
+  })
+}
+
+export async function getLatestBlock(): Promise<Block<bigint, true>> {
+  return getBlock('latest')
+}
+
+export async function getLatestBlockNumber(): Promise<bigint> {
+  const client = getRpcClient()
+  return client.getBlockNumber()
 }
 
 export async function getTransactionReceipt(hash: `0x${string}`): Promise<TransactionReceipt | null> {

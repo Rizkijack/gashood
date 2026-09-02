@@ -5,6 +5,12 @@ import { useGasStore } from "@/store/gas-store";
 import { World } from "@/scene/World";
 import { GasCity } from "@/scene/GasCity";
 import { CameraController } from "@/scene/CameraController";
+import { CameraFocus } from "@/scene/CameraFocus";
+import { Dashboard } from "@/ui/Dashboard";
+import { GasTable } from "@/ui/GasTable";
+import { TxFeed } from "@/ui/TxFeed";
+import { Legend } from "@/ui/Legend";
+import { DetailPanel } from "@/ui/DetailPanel";
 
 // ─── WebGL Support Check ─────────────────────────────────────────────
 function isWebGLAvailable(): boolean {
@@ -42,6 +48,8 @@ class SceneErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryStat
   }
 }
 
+type Viewport = "mobile" | "tablet" | "desktop";
+
 // ─── Minimal inline styles (no Tailwind needed) ──────────────────────
 const styles: Record<string, React.CSSProperties> = {
   root: {
@@ -54,83 +62,110 @@ const styles: Record<string, React.CSSProperties> = {
   },
   canvasWrapper: {
     position: "absolute",
-    inset: "0",
+    inset: 0,
   },
-  overlayTop: {
+  legendAnchor: {
     position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: "12px 20px",
-    background: "rgba(10, 10, 15, 0.72)",
-    backdropFilter: "blur(12px)",
-    borderBottom: "1px solid rgba(255,255,255,0.08)",
-    color: "#fff",
-    zIndex: 10,
-    pointerEvents: "none",
+    left: 16,
+    bottom: 16,
+    zIndex: 15,
   },
-  brand: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-  },
-  brandTitle: {
-    fontSize: 18,
-    fontWeight: 800,
-    letterSpacing: "-0.02em",
-  },
-  brandSub: {
+  hint: {
+    position: "absolute",
+    bottom: 12,
+    left: "50%",
+    transform: "translateX(-50%)",
+    color: "rgba(255,255,255,0.35)",
     fontSize: 11,
-    color: "rgba(255,255,255,0.5)",
+    zIndex: 12,
+    pointerEvents: "none",
+    whiteSpace: "nowrap" as const,
+  },
+  errorToast: {
+    position: "absolute",
+    top: 64,
+    left: "50%",
+    transform: "translateX(-50%)",
+    background: "rgba(239,68,68,0.92)",
+    color: "#fff",
+    padding: "8px 16px",
+    borderRadius: 8,
+    fontSize: 12,
+    zIndex: 40,
+    maxWidth: "90vw",
+    textAlign: "center" as const,
+  },
+  toggleBtn: {
+    position: "absolute",
+    right: 16,
+    bottom: 16,
+    zIndex: 25,
+    background: "rgba(10, 10, 15, 0.8)",
+    backdropFilter: "blur(8px)",
+    WebkitBackdropFilter: "blur(8px)",
+    border: "1px solid rgba(255,255,255,0.15)",
+    color: "#fff",
+    borderRadius: 10,
+    padding: "10px 14px",
+    fontSize: 13,
+    cursor: "pointer",
+    boxShadow: "0 6px 18px rgba(0,0,0,0.4)",
+  },
+  panelCard: {
+    position: "absolute",
+    display: "flex",
+    flexDirection: "column",
+    background: "rgba(10, 10, 15, 0.78)",
+    backdropFilter: "blur(14px)",
+    WebkitBackdropFilter: "blur(14px)",
+    border: "1px solid rgba(255,255,255,0.1)",
+    color: "#fff",
+    zIndex: 18,
+    overflow: "hidden",
+  },
+  panelHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "8px 12px",
+    borderBottom: "1px solid rgba(255,255,255,0.08)",
+    flexShrink: 0,
+    fontSize: 10,
+    fontWeight: 700,
     letterSpacing: "0.08em",
     textTransform: "uppercase" as const,
+    color: "rgba(255,255,255,0.6)",
   },
-  stats: {
-    display: "flex",
-    gap: 20,
-    alignItems: "center",
-  },
-  statItem: {
-    textAlign: "right" as const,
-  },
-  statLabel: {
-    fontSize: 10,
-    color: "rgba(255,255,255,0.45)",
-    letterSpacing: "0.06em",
-    textTransform: "uppercase" as const,
-  },
-  statValue: {
-    fontSize: 13,
-    fontFamily: "monospace",
-    fontWeight: 600,
+  panelClose: {
+    background: "rgba(255,255,255,0.08)",
+    border: "1px solid rgba(255,255,255,0.12)",
     color: "#fff",
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 999,
-    display: "inline-block",
-    marginRight: 6,
-  },
-  overlayBottom: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    padding: "10px 20px",
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    background: "rgba(10,10,15,0.55)",
-    backdropFilter: "blur(8px)",
-    borderTop: "1px solid rgba(255,255,255,0.06)",
-    color: "rgba(255,255,255,0.65)",
+    borderRadius: 6,
+    width: 22,
+    height: 22,
+    cursor: "pointer",
     fontSize: 11,
-    zIndex: 10,
-    pointerEvents: "none",
+    lineHeight: 1,
+  },
+  tableWrap: {
+    overflowY: "auto",
+    flexShrink: 0,
+    borderBottom: "1px solid rgba(255,255,255,0.08)",
+  },
+  feedWrap: {
+    flex: 1,
+    minHeight: 0,
+    display: "flex",
+    flexDirection: "column",
+  },
+  feedTitle: {
+    padding: "8px 12px 4px",
+    fontSize: 10,
+    fontWeight: 700,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase" as const,
+    color: "rgba(255,255,255,0.6)",
+    flexShrink: 0,
   },
   fallback: {
     width: "100%",
@@ -163,90 +198,99 @@ const styles: Record<string, React.CSSProperties> = {
   },
 };
 
-function Overlay() {
-  const { networkStats, isCollecting, error } = useGasStore();
+/** Desktop (>1024): right side panel. Tablet (768–1024): bottom sheet. Mobile (<768): full-screen overlay. */
+function placePanel(vp: Viewport): React.CSSProperties {
+  if (vp === "desktop") {
+    return { top: 58, right: 0, bottom: 0, width: 400, borderRadius: 0, borderRight: "none", borderTop: "none", borderBottom: "none" };
+  }
+  if (vp === "tablet") {
+    return { left: 10, right: 10, bottom: 10, maxHeight: "44vh", borderRadius: 14 };
+  }
+  return { inset: 0, borderRadius: 0, border: "none" };
+}
+
+function useViewport(): Viewport {
+  const [vp, setVp] = useState<Viewport>("desktop");
+  useEffect(() => {
+    const mqDesktop = window.matchMedia("(min-width: 1025px)");
+    const mqTablet = window.matchMedia("(min-width: 768px) and (max-width: 1024px)");
+    const update = () => {
+      if (mqDesktop.matches) setVp("desktop");
+      else if (mqTablet.matches) setVp("tablet");
+      else setVp("mobile");
+    };
+    update();
+    mqDesktop.addEventListener("change", update);
+    mqTablet.addEventListener("change", update);
+    return () => {
+      mqDesktop.removeEventListener("change", update);
+      mqTablet.removeEventListener("change", update);
+    };
+  }, []);
+  return vp;
+}
+
+/** Right overlay: GasTable + TxFeed, responsive placement (4.6). */
+function AnalyticsPanel({ viewport, open, onClose }: { viewport: Viewport; open: boolean; onClose: () => void }) {
+  if (!open) return null;
+
+  // Tablet/mobile: compact table height so feed stays visible in the sheet.
+  const tableMaxHeight = viewport === "desktop" ? 330 : viewport === "tablet" ? "40%" : "42%";
+
+  return (
+    <div style={{ ...styles.panelCard, ...placePanel(viewport) }}>
+      <div style={styles.panelHeader}>
+        <span>Network Analytics</span>
+        <button style={styles.panelClose} onClick={onClose} title="Close panel">✕</button>
+      </div>
+      <div style={{ ...styles.tableWrap, maxHeight: tableMaxHeight }}>
+        <GasTable />
+      </div>
+      <div style={styles.feedWrap}>
+        <div style={styles.feedTitle}>Live Transactions</div>
+        <TxFeed />
+      </div>
+    </div>
+  );
+}
+
+// ─── Overlay layers (Fase 4) ─────────────────────────────────────────
+function OverlayLayers() {
+  const viewport = useViewport();
+  const error = useGasStore((s) => s.error);
+  // Desktop/tablet: panel visible by default. Mobile: hidden behind toggle (4.6).
+  const [panelOpen, setPanelOpen] = useState<boolean>(() =>
+    typeof window === "undefined" ? true : window.innerWidth >= 768,
+  );
+
+  // Auto-open when rotating out of mobile so the analytics stay reachable.
+  useEffect(() => {
+    if (viewport !== "mobile" && !panelOpen) setPanelOpen(true);
+  }, [viewport, panelOpen]);
 
   return (
     <>
-      <div style={styles.overlayTop}>
-        <div style={styles.brand}>
-          <div
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 8,
-              background: "linear-gradient(135deg,#00FF88 0%,#00CCFF 100%)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 16,
-            }}
-          >
-            ⛽
-          </div>
-          <div>
-            <div style={styles.brandTitle}>GasHood</div>
-            <div style={styles.brandSub}>Robinhood Chain · 3D Gas Tracker</div>
-          </div>
-        </div>
+      <Dashboard />
 
-        <div style={styles.stats}>
-          <div style={styles.statItem}>
-            <div style={styles.statLabel}>Status</div>
-            <div style={styles.statValue}>
-              <span
-                style={{
-                  ...styles.statusDot,
-                  background: isCollecting ? "#00FF88" : "#FFAA00",
-                  boxShadow: isCollecting ? "0 0 8px #00FF88" : "none",
-                }}
-              />
-              {isCollecting ? "Collecting" : "Idle"}
-            </div>
-          </div>
-          <div style={styles.statItem}>
-            <div style={styles.statLabel}>Gas Price</div>
-            <div style={styles.statValue}>{networkStats.currentGasPrice.toFixed(4)} Gwei</div>
-          </div>
-          <div style={styles.statItem}>
-            <div style={styles.statLabel}>Block</div>
-            <div style={styles.statValue}>#{networkStats.lastBlockNumber.toLocaleString()}</div>
-          </div>
-          <div style={styles.statItem}>
-            <div style={styles.statLabel}>Total Tx</div>
-            <div style={styles.statValue}>{networkStats.totalTransactions.toLocaleString()}</div>
-          </div>
-        </div>
+      <div style={styles.legendAnchor}>
+        <Legend />
       </div>
 
-      {error && (
-        <div
-          style={{
-            position: "absolute",
-            top: 64,
-            left: "50%",
-            transform: "translateX(-50%)",
-            background: "rgba(239,68,68,0.92)",
-            color: "#fff",
-            padding: "8px 16px",
-            borderRadius: 8,
-            fontSize: 12,
-            zIndex: 11,
-            maxWidth: "90vw",
-            textAlign: "center",
-          }}
-        >
-          {error}
-        </div>
+      {viewport === "desktop" && (
+        <div style={styles.hint}>Drag to orbit · Scroll to zoom · Hover a row or building to highlight · Click for details</div>
       )}
 
-      <div style={styles.overlayBottom}>
-        <span>
-          Drag to orbit · Scroll to zoom · Click building to select ·{" "}
-          <span style={{ color: "#00FF88" }}>12 buildings mapped</span>
-        </span>
-        <span style={{ opacity: 0.5 }}>Fase 2 — 3D World Basic</span>
-      </div>
+      <AnalyticsPanel viewport={viewport} open={panelOpen} onClose={() => setPanelOpen(false)} />
+
+      {!panelOpen && (
+        <button style={styles.toggleBtn} onClick={() => setPanelOpen(true)} title="Open analytics panel">
+          📊 Analytics
+        </button>
+      )}
+
+      <DetailPanel />
+
+      {error && <div style={styles.errorToast}>{error}</div>}
     </>
   );
 }
@@ -364,12 +408,13 @@ export default function App() {
                 <GasCity />
               </World>
               <CameraController />
+              <CameraFocus />
             </Canvas>
           </Suspense>
         </SceneErrorBoundary>
       </div>
 
-      <Overlay />
+      <OverlayLayers />
     </div>
   );
 }

@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 import { TxType, type ClassifiedTransaction } from '@/data/tx-classifier'
+import { weiToGwei, weiToEth } from '@/utils/gas-math'
+import { ROBINHOOD_CHAIN } from '@/config/chain'
 
 export interface GasMetric {
   txType: TxType
@@ -33,16 +35,31 @@ export interface GasStore {
   isCollecting: boolean
   error: string | null
 
-  updateMetrics: (txs: ClassifiedTransaction[], blockNumber: number) => void
+  updateMetrics: (txs: ClassifiedTransaction[], blockNumber: number, currentGasPriceWei?: bigint) => void
+  /** Alias sesuai penamaan dokumen (BUILD_STEPS.md Langkah 9) — logika sama dengan updateMetrics. */
+  updateFromBlock: (txs: ClassifiedTransaction[], blockNumber: number, currentGasPriceWei?: bigint) => void
   selectType: (type: TxType | null) => void
   hoverType: (type: TxType | null) => void
+  clearSelection: () => void
   setTimeRange: (range: TimeRange) => void
   setCollecting: (collecting: boolean) => void
   setError: (error: string | null) => void
   clearRecentTxs: () => void
 }
 
-const MAX_RECENT_TXS = parseInt(import.meta.env.VITE_MAX_RECENT_TXS || '200')
+function parseMaxRecentTxs(raw: string | undefined): number {
+  const parsed = parseInt(raw ?? '')
+  return Number.isNaN(parsed) || parsed <= 0 ? 200 : parsed
+}
+
+const MAX_RECENT_TXS = parseMaxRecentTxs(import.meta.env.VITE_MAX_RECENT_TXS)
+
+/**
+ * Akumulator harga non-nol per tipe (state internal agregasi, non-reaktif).
+ * Avg harga hanya dihitung dari tx dengan effectiveGasPrice > 0 agar tx
+ * tanpa receipt (harga 0) tidak meracuni rata-rata (audit B1).
+ */
+const priceAccumulator = new Map<TxType, { sumGwei: number; count: number }>()
 
 const createInitialMetrics = (): Map<TxType, GasMetric> => {
   const metrics = new Map<TxType, GasMetric>()
@@ -62,9 +79,6 @@ const createInitialMetrics = (): Map<TxType, GasMetric> => {
   return metrics
 }
 
-const weiToGwei = (wei: bigint): number => Number(wei) / 1e9
-const weiToEth = (wei: bigint): number => Number(wei) / 1e18
-
 export const useGasStore = create<GasStore>((set, get) => ({
   gasMetrics: createInitialMetrics(),
   recentTxs: [],
@@ -81,10 +95,17 @@ export const useGasStore = create<GasStore>((set, get) => ({
   isCollecting: false,
   error: null,
 
-  updateMetrics: (txs, blockNumber) => {
+  updateMetrics: (txs, blockNumber, currentGasPriceWei) => {
     const { gasMetrics, recentTxs } = get()
 
     const newMetrics = new Map(gasMetrics)
+
+    // recentTxCount = semantik "window terakhir": hitung dari batch terbaru
+    // per tipe, bukan kloning totalTxCount (audit B1).
+    const batchCount = new Map<TxType, number>()
+    for (const tx of txs) {
+      batchCount.set(tx.txType, (batchCount.get(tx.txType) ?? 0) + 1)
+    }
 
     txs.forEach((tx) => {
       const existing = newMetrics.get(tx.txType)
@@ -96,18 +117,28 @@ export const useGasStore = create<GasStore>((set, get) => ({
 
       const totalCount = existing.totalTxCount + 1
       const newAvgGasUsed = (existing.avgGasUsed * existing.totalTxCount + gasUsed) / totalCount
-      const newAvgGasPrice = (existing.avgGasPrice * existing.totalTxCount + priceGwei) / totalCount
+
+      // Skip harga 0 dari agregasi min/avg (audit B1).
+      const priced = priceGwei > 0
+      if (priced) {
+        const acc = priceAccumulator.get(tx.txType) ?? { sumGwei: 0, count: 0 }
+        acc.sumGwei += priceGwei
+        acc.count += 1
+        priceAccumulator.set(tx.txType, acc)
+      }
+      const priceAcc = priceAccumulator.get(tx.txType)
+      const newAvgGasPrice = priceAcc && priceAcc.count > 0 ? priceAcc.sumGwei / priceAcc.count : existing.avgGasPrice
 
       newMetrics.set(tx.txType, {
         ...existing,
         avgGasUsed: newAvgGasUsed,
         avgGasPrice: newAvgGasPrice,
-        minGasPrice: Math.min(existing.minGasPrice, priceGwei),
-        maxGasPrice: Math.max(existing.maxGasPrice, priceGwei),
+        minGasPrice: priced ? Math.min(existing.minGasPrice, priceGwei) : existing.minGasPrice,
+        maxGasPrice: priced ? Math.max(existing.maxGasPrice, priceGwei) : existing.maxGasPrice,
         totalTxCount: totalCount,
-        recentTxCount: existing.recentTxCount + 1,
+        recentTxCount: batchCount.get(tx.txType) ?? 0,
         totalFeeEth: existing.totalFeeEth + feeEth,
-        trend: priceGwei > existing.avgGasPrice ? 'up' : priceGwei < existing.avgGasPrice ? 'down' : 'stable',
+        trend: priced && priceGwei > existing.avgGasPrice ? 'up' : priced && priceGwei < existing.avgGasPrice ? 'down' : 'stable',
       })
     })
 
@@ -116,21 +147,39 @@ export const useGasStore = create<GasStore>((set, get) => ({
     const totalGas = txs.reduce((sum, tx) => sum + Number(tx.gasUsed), 0)
     const avgBlockGas = txs.length > 0 ? totalGas / txs.length : 0
 
+    const prevStats = get().networkStats
+
+    // tps = transaksi per DETIK, bukan per block (audit B9).
+    const blockTimeSec = ROBINHOOD_CHAIN.blockTime / 1000
+    const tps = blockTimeSec > 0 ? txs.length / blockTimeSec : txs.length
+
+    // currentGasPrice dari eth_gasPrice (getGasPrice) — bukan dari
+    // txs[0].effectiveGasPrice yang menyesatkan (audit B2/security).
+    const currentGasPrice =
+      currentGasPriceWei !== undefined && currentGasPriceWei > 0n
+        ? weiToGwei(currentGasPriceWei)
+        : prevStats.currentGasPrice
+
     set({
       gasMetrics: newMetrics,
       recentTxs: updatedTxs,
       networkStats: {
-        currentGasPrice: txs.length > 0 ? weiToGwei(txs[0].effectiveGasPrice) : get().networkStats.currentGasPrice,
+        currentGasPrice,
         avgBlockGas,
-        tps: txs.length,
-        totalTransactions: get().networkStats.totalTransactions + txs.length,
+        tps,
+        totalTransactions: prevStats.totalTransactions + txs.length,
         lastBlockNumber: blockNumber,
       },
     })
   },
 
+  updateFromBlock: (txs, blockNumber, currentGasPriceWei) => {
+    get().updateMetrics(txs, blockNumber, currentGasPriceWei)
+  },
+
   selectType: (type) => set({ selectedType: type }),
   hoverType: (type) => set({ hoveredType: type }),
+  clearSelection: () => set({ selectedType: null }),
   setTimeRange: (range) => set({ timeRange: range }),
   setCollecting: (collecting) => set({ isCollecting: collecting }),
   setError: (error) => set({ error }),

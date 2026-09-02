@@ -1,32 +1,29 @@
-import { Environment } from "@react-three/drei";
-import { Component, Suspense, type ReactNode } from "react";
+import { type ReactNode, Component, Suspense } from 'react'
+import { Environment } from '@react-three/drei'
+import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing'
+import { GasParticles } from './GasParticles'
+import { DataRiver } from './DataRiver'
+import { SkyDome } from './SkyDome'
 
-/**
- * Environment (HDR dari CDN) bersifat opsional — kalau fetch gagal
- * (offline/CSP/CDN down), boundary ini render null sehingga scene lokal
- * (bangunan, ground, grid) tetap tampil tanpa collapse.
- */
 class EnvironmentBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
-  state = { failed: false };
+  state = { failed: false }
   static getDerivedStateFromError() {
-    return { failed: true };
+    return { failed: true }
   }
   render() {
-    return this.state.failed ? null : this.props.children;
+    return this.state.failed ? null : this.props.children
   }
 }
 
 interface WorldProps {
-  children?: ReactNode;
+  children?: ReactNode
 }
 
 export function World({ children }: WorldProps) {
   return (
     <>
-      {/* Fog for depth */}
-      <fog attach="fog" args={["#0a0a0f", 20, 50]} />
+      <fog attach="fog" args={['#0a0a0f', 20, 50]} />
 
-      {/* Lighting */}
       <ambientLight intensity={0.4} />
       <directionalLight
         intensity={0.8}
@@ -40,27 +37,35 @@ export function World({ children }: WorldProps) {
         shadow-camera-top={20}
         shadow-camera-bottom={-20}
       />
+      <pointLight position={[-8, 5, -8]} intensity={0.3} color="#4488ff" />
+      <pointLight position={[8, 5, 8]} intensity={0.2} color="#ff8844" />
 
-      {/* Ground plane — surface at y=0 (konsisten dengan base bangunan di y=0) */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <planeGeometry args={[30, 30]} />
+        <planeGeometry args={[40, 40]} />
         <meshStandardMaterial color="#0a0a0f" roughness={0.8} metalness={0.1} />
       </mesh>
+      <gridHelper args={[40, 40, '#1a1a2e', '#111122']} position={[0, 0.01, 0]} />
 
-      {/* Subtle grid helper on top of ground */}
-      <gridHelper args={[30, 30, "#1a1a2e", "#1a1a2e"]} position={[0, 0.01, 0]} />
-
-      {/* Environment map for reflections (suspends while HDR loads; optional — lihat EnvironmentBoundary) */}
       <EnvironmentBoundary>
         <Suspense fallback={null}>
           <Environment preset="city" />
         </Suspense>
       </EnvironmentBoundary>
 
-      {/* Scene content */}
       {children}
-    </>
-  );
-}
 
-export default World;
+      <GasParticles />
+      <DataRiver />
+      <SkyDome />
+
+      <EffectComposer>
+        <Bloom
+          luminanceThreshold={0.8}
+          luminanceSmoothing={0.9}
+          intensity={0.5}
+        />
+        <Vignette offset={0.3} darkness={0.5} />
+      </EffectComposer>
+    </>
+  )
+}

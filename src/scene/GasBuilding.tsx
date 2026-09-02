@@ -1,6 +1,5 @@
-import { Text } from "@react-three/drei";
-import { useMemo, useRef, useState } from "react";
-import * as THREE from "three";
+import { Billboard, Text } from "@react-three/drei";
+import { useMemo, useState } from "react";
 import { TxType } from "@/data/tx-classifier";
 import { useGasStore } from "@/store/gas-store";
 
@@ -25,7 +24,6 @@ function formatLabel(txType: string): string {
 }
 
 export function GasBuilding({ txType, position }: GasBuildingProps) {
-  const meshRef = useRef<THREE.Mesh>(null);
   const [isHovered, setIsHovered] = useState(false);
 
   // Subscribe to metrics for this txType
@@ -42,6 +40,11 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
     if (avgGasUsed === 0) return 0.5;
     return Math.min(avgGasUsed / 200_000, 1) * 7.5 + 0.5;
   }, [avgGasUsed]);
+
+  // Width mapping (BUILD_STEPS.md Langkah 12): normalize(recentTxCount, 0, 50) * 1.5 + 0.5, clamp agar <= 2
+  const width = useMemo(() => {
+    return Math.min(recentTxCount / 50, 1) * 1.5 + 0.5;
+  }, [recentTxCount]);
 
   const baseColor = useMemo(() => getColorForGasPrice(avgGasPrice), [avgGasPrice]);
 
@@ -87,7 +90,6 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
     <group position={position}>
       {/* Building mesh, anchored at ground: y = height/2 */}
       <mesh
-        ref={meshRef}
         position={[0, height / 2, 0]}
         scale={displayScale}
         castShadow
@@ -96,7 +98,7 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
         onPointerOut={handlePointerOut}
         onClick={handleClick}
       >
-        <boxGeometry args={[1, height, 1]} />
+        <boxGeometry args={[width, height, width]} />
         <meshStandardMaterial
           color={baseColor}
           emissive={baseColor}
@@ -111,40 +113,42 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
       {/* Selected outline effect via secondary wireframe box */}
       {isSelected && (
         <mesh position={[0, height / 2, 0]} scale={[1.08, 1.02, 1.08]}>
-          <boxGeometry args={[1, height, 1]} />
+          <boxGeometry args={[width, height, width]} />
           <meshBasicMaterial color={baseColor} wireframe transparent opacity={0.35} />
         </mesh>
       )}
 
-      {/* Floating label */}
-      <Text
-        position={[0, height + 0.7, 0]}
-        fontSize={0.3}
-        color="#fff"
-        anchorX="center"
-        anchorY="middle"
-        outlineWidth={0.02}
-        outlineColor="#000000"
-        maxWidth={2}
-        textAlign="center"
-        // Billboarding handled by drei Text internally (faces camera)
-      >
-        {labelText}
-      </Text>
+      {/* Floating label — wrapped in <Billboard> so the text always faces
+          the camera (drei <Text> alone does NOT auto-billboard) */}
+      <Billboard position={[0, height + 0.7, 0]}>
+        <Text
+          fontSize={0.3}
+          color="#fff"
+          anchorX="center"
+          anchorY="middle"
+          outlineWidth={0.02}
+          outlineColor="#000000"
+          maxWidth={2}
+          textAlign="center"
+        >
+          {labelText}
+        </Text>
+      </Billboard>
 
       {/* Secondary small label for gas price when active */}
       {avgGasPrice > 0 && (
-        <Text
-          position={[0, height + 0.35, 0]}
-          fontSize={0.14}
-          color={baseColor}
-          anchorX="center"
-          anchorY="middle"
-          outlineWidth={0.01}
-          outlineColor="#000000"
-        >
-          {avgGasPrice < 0.01 ? "<0.01 Gwei" : `${avgGasPrice.toFixed(3)} Gwei`}
-        </Text>
+        <Billboard position={[0, height + 0.35, 0]}>
+          <Text
+            fontSize={0.14}
+            color={baseColor}
+            anchorX="center"
+            anchorY="middle"
+            outlineWidth={0.01}
+            outlineColor="#000000"
+          >
+            {avgGasPrice < 0.01 ? "<0.01 Gwei" : `${avgGasPrice.toFixed(3)} Gwei`}
+          </Text>
+        </Billboard>
       )}
     </group>
   );

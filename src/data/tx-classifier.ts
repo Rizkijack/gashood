@@ -23,6 +23,12 @@ export const METHOD_SIGNATURES: Record<string, TxType> = {
   // ERC-20
   '0xa9059cbb': TxType.ERC20_TRANSFER,
   '0x095ea7b3': TxType.ERC20_APPROVE,
+  '0x23b872dd': TxType.ERC20_TRANSFER,
+  '0x39509351': TxType.ERC20_APPROVE, // increaseAllowance
+  '0xa457c2d7': TxType.ERC20_APPROVE, // decreaseAllowance
+  '0xd505accf': TxType.ERC20_APPROVE, // permit (Dai-style, dengan expiry)
+  '0x6e291e48': TxType.ERC20_APPROVE, // permit (ERC-2612)
+  '0xa22cb465': TxType.ERC20_APPROVE, // setApprovalForAll (ERC-721/1155)
 
   // DEX / Swap
   '0x38ed1739': TxType.DEX_SWAP,
@@ -38,17 +44,24 @@ export const METHOD_SIGNATURES: Record<string, TxType> = {
   '0xbaa2abde': TxType.LIQUIDITY,
   '0x02751cec': TxType.LIQUIDITY,
 
-  // Bridge
+  // Bridge (deposit/withdraw WETH memakai semantik terdekat: wrap/unwrap)
   '0x439370b1': TxType.BRIDGE_DEPOSIT,
   '0xd2ce7d65': TxType.BRIDGE_DEPOSIT,
+  '0xd0e30db0': TxType.BRIDGE_DEPOSIT, // deposit() — WETH
   '0x25e16063': TxType.BRIDGE_WITHDRAW,
   '0xc2eeeebd': TxType.BRIDGE_WITHDRAW,
+  '0x2e1a7d4d': TxType.BRIDGE_WITHDRAW, // withdraw(uint256) — WETH
 
   // NFT
   '0x42842e0e': TxType.NFT_TRANSFER,
   '0x40c10f19': TxType.NFT_MINT,
   '0xa1448194': TxType.NFT_MINT,
   '0xf242432a': TxType.NFT_TRANSFER,
+  '0x2eb2c2d6': TxType.NFT_TRANSFER, // safeBatchTransferFrom (ERC-1155)
+
+  // Contract call umum (eksplisit meski fallback juga CONTRACT_CALL)
+  '0xac9650d8': TxType.CONTRACT_CALL, // multicall(bytes[])
+  '0x6a761202': TxType.CONTRACT_CALL, // execTransaction (Gnosis Safe)
 }
 
 export interface TransactionData {
@@ -76,10 +89,6 @@ function extractSelector(data: string): string | null {
   return data.slice(0, 10).toLowerCase()
 }
 
-function isNftTransfer(selector: string): boolean {
-  return selector === '0x42842e0e' || selector === '0xf242432a'
-}
-
 export function classifyTransaction(tx: TransactionData): TxType {
   if (tx.to === null) {
     return TxType.CONTRACT_DEPLOY
@@ -92,13 +101,7 @@ export function classifyTransaction(tx: TransactionData): TxType {
   const selector = extractSelector(tx.input)
 
   if (selector && METHOD_SIGNATURES[selector]) {
-    const txType = METHOD_SIGNATURES[selector]
-
-    if (isNftTransfer(selector)) {
-      return TxType.NFT_TRANSFER
-    }
-
-    return txType
+    return METHOD_SIGNATURES[selector]
   }
 
   return TxType.CONTRACT_CALL
