@@ -1,18 +1,32 @@
 import { Billboard, Text } from "@react-three/drei";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { TxType } from "@/data/tx-classifier";
 import { useGasStore } from "@/store/gas-store";
+import {
+  PODIUM_HEIGHT,
+  PODIUM_WIDTH,
+  getFacadeMaterialParams,
+  getFacadeTextures,
+  getPodiumGeometry,
+  getPodiumTextures,
+  getTopStackWidth,
+  getTowerGeometry,
+  registerRooftopLive,
+  unregisterRooftopLive,
+  type RooftopLiveState,
+} from "./BuildingFacade";
 
 interface GasBuildingProps {
   txType: TxType;
   position: [number, number, number];
 }
 
-// Tinggi tetap (world units) plinth & atap — tidak ikut scale tinggi bangunan.
-const PLINTH_HEIGHT = 0.12;
+// Tinggi tetap (world units) cap atap — tidak ikut scale tinggi bangunan.
 const ROOF_HEIGHT = 0.15;
+// Cap atap sedikit lebih lebar dari stack teratas (parapet menjorok keluar).
+const ROOF_MARGIN = 1.05;
 
 /** Color scale per 3D_DESIGN.md gas price bracket (Gwei) */
 function getColorForGasPrice(avgGasPrice: number): string {
@@ -29,64 +43,15 @@ function formatLabel(txType: string): string {
   return txType.replace(/_/g, " ").toUpperCase();
 }
 
-/* ---- Jendela procedural (CanvasTexture) -----------------------------------
- * Satu tekstur "grid jendela" per baseColor, di-cache agar tidak dibuat ulang
- * saat re-render. Dipakai sebagai map + emissiveMap material body — ZERO extra
- * draw call (AC rekonstruksi visual). Jendela menyala lewat emissiveIntensity
- * yang sudah ada (emissiveMap × emissive color × intensity). */
-const windowTextureCache = new Map<string, THREE.CanvasTexture>();
-
-function getWindowTexture(baseColor: string): THREE.CanvasTexture {
-  const cached = windowTextureCache.get(baseColor);
-  if (cached) return cached;
-
-  const canvas = document.createElement("canvas");
-  canvas.width = 128;
-  canvas.height = 256;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Canvas 2D tidak tersedia");
-
-  // Dinding gelap — warna asli bangunan tetap terlihat lewat color material.
-  ctx.fillStyle = "#0b0d12";
-  ctx.fillRect(0, 0, 128, 256);
-
-  const cols = 6;
-  const rows = 14;
-  const marginX = 6;
-  const marginY = 5;
-  const cellW = (128 - marginX * 2) / cols;
-  const cellH = (256 - marginY * 2) / rows;
-
-  // PRNG kecil & deterministik untuk variasi jendela (mati/terang) — hasil
-  // konsisten untuk baseColor yang sama (cache), bukan random per render.
-  let seed = 7;
-  const rnd = () => {
-    seed = (seed * 16807) % 2147483647;
-    return seed / 2147483647;
-  };
-
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      if (rnd() < 0.12) continue; // sebagian jendela mati — lebih realistis
-      const glow = 0.75 + rnd() * 0.25;
-      const x = marginX + c * cellW + 1.5;
-      const y = marginY + r * cellH + 1.5;
-      const w = cellW - 3;
-      const h = cellH - 3;
-      const grad = ctx.createLinearGradient(0, y, 0, y + h);
-      grad.addColorStop(0, `rgba(255,255,255,${glow})`);
-      grad.addColorStop(1, `rgba(170,185,255,${glow * 0.65})`);
-      ctx.fillStyle = grad;
-      ctx.fillRect(x, y, w, h);
-    }
-  }
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
-  windowTextureCache.set(baseColor, tex);
-  return tex;
-}
+/* ---- Arsitektur prosedural (BuildingFacade.tsx) --------------------------
+ * Semua tekstur (albedo+emissive jendela, podium) dan geometri tower
+ * (merge stack setback) dibuat SEKALI di module-cache helper — bukan per
+ * render. Arketipe deterministik per TxType:
+ *   glass    — menara kaca modern   | concrete — beton mid-rise rulek
+ *   setback  — menara 3 stack       |
+ * Draw call per bangunan: tower(1) + podium(1) + cap(1) = 3 (sama dgn lama).
+ * Detail rooftop (AC/antena/water tower) = instancing GLOBAL, lihat
+ * RooftopDetails di BuildingFacade.tsx (mount sekali di World). */
 
 export function GasBuilding({ txType, position }: GasBuildingProps) {
   const [isHovered, setIsHovered] = useState(false);
@@ -113,12 +78,17 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
 
   const baseColor = useMemo(() => getColorForGasPrice(avgGasPrice), [avgGasPrice]);
 
-  // Tekstur jendela — dibuat sekali lalu di-cache per baseColor (bukan per frame).
-  const windowTexture = useMemo(() => getWindowTexture(baseColor), [baseColor]);
+  // Tekstur & geometri fasad — di-cache per TxType di helper (dibuat sekali).
+  const facade = useMemo(() => getFacadeTextures(txType), [txType]);
+  const towerGeometry = useMemo(() => getTowerGeometry(txType), [txType]);
+  const facadeParams = useMemo(() => getFacadeMaterialParams(txType), [txType]);
+  const topStackWidth = useMemo(() => getTopStackWidth(txType), [txType]);
+  const podiumTextures = useMemo(() => getPodiumTextures(), []);
+  const podiumGeometry = useMemo(() => getPodiumGeometry(), []);
 
-  // Warna turunan plinth & atap: baseColor digelapkan ~28-30% — hitung sekali
-  // saat baseColor berubah via useMemo, BUKAN per frame (AC).
-  const plinthColor = useMemo(() => new THREE.Color(baseColor).multiplyScalar(0.7), [baseColor]);
+  // Warna turunan podium & atap: baseColor digelapkan ~28-30% — dihitung
+  // sekali saat baseColor berubah via useMemo, BUKAN per frame (AC).
+  const podiumColor = useMemo(() => new THREE.Color(baseColor).multiplyScalar(0.7), [baseColor]);
   const roofColor = useMemo(() => new THREE.Color(baseColor).multiplyScalar(0.72), [baseColor]);
 
   // Emissive intensity dari recentTxCount: normalize 0..50 -> 0.1..0.8
@@ -133,12 +103,14 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
   const hoverBoost = activeHover || isSelected ? 1.05 : 1;
 
   // ---- L17 + L21: satu useFrame yang menggabungkan lerp & pulse ----
-  // GROUP = body + plinth + roof (AC: lerp diterapkan ke group, bukan mesh
-  // tunggal). Geometry SATU KALI (unit 1×1×1) — ukuran data lewat scale.
+  // GROUP = tower + podium + cap (AC: lerp diterapkan ke group). Podium/cap
+  // counter-scale sumbu Y agar tinggi dunianya tetap (tidak ikut memanjang).
   const groupRef = useRef<THREE.Group>(null);
-  const plinthRef = useRef<THREE.Mesh>(null);
+  const podiumRef = useRef<THREE.Mesh>(null);
   const roofRef = useRef<THREE.Mesh>(null);
   const matRef = useRef<THREE.MeshStandardMaterial>(null);
+  const podiumMatRef = useRef<THREE.MeshStandardMaterial>(null);
+  const roofMatRef = useRef<THREE.MeshStandardMaterial>(null);
 
   // State animasi per bangunan (tanpa alokasi per frame)
   const currentHeightRef = useRef<number | null>(null); // null = snap frame pertama
@@ -150,13 +122,24 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
   const pulseRef = useRef(0);
   const prevTxCountRef = useRef(0);
 
+  // Registry live-state untuk RooftopDetails (instancing global) — objek yang
+  // sama dipakai ulang, GasBuilding hanya menulis field tiap frame (0 alokasi).
+  const liveRef = useRef<RooftopLiveState | null>(null);
+  useEffect(() => {
+    liveRef.current = registerRooftopLive(txType);
+    return () => {
+      unregisterRooftopLive(txType);
+      liveRef.current = null;
+    };
+  }, [txType]);
+
   useFrame(() => {
     const group = groupRef.current;
     const mat = matRef.current;
     if (!group || !mat) return;
 
     // (a) L17 — lerp tinggi (faktor 0.05); posisi y = height/2 agar bangunan
-    // tumbuh dari lantai (group origin = dasar bangunan; body unit di [0,0,0]
+    // tumbuh dari lantai (group origin = dasar bangunan; tower unit di [0,0,0]
     // → world span [0, height]). Lerp ke GROUP scale [width, height, width].
     if (currentHeightRef.current === null) currentHeightRef.current = height;
     currentHeightRef.current = THREE.MathUtils.lerp(currentHeightRef.current, height, 0.05);
@@ -172,6 +155,15 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
     mat.color.copy(currentColorRef.current);
     mat.emissive.copy(currentColorRef.current); // glow lewat emissiveMap jendela
 
+    // Turunan warna podium & cap ikut lerp (copy+multiplyScalar, 0 alokasi).
+    const podiumMat = podiumMatRef.current;
+    if (podiumMat) {
+      podiumMat.color.copy(currentColorRef.current).multiplyScalar(0.7);
+      podiumMat.emissive.copy(currentColorRef.current);
+    }
+    const roofMat = roofMatRef.current;
+    if (roofMat) roofMat.color.copy(currentColorRef.current).multiplyScalar(0.72);
+
     // (b) L21 — pulse: recentTxCount naik -> pulse = 1, decay x0.95/frame.
     if (recentTxCount > prevTxCountRef.current) pulseRef.current = 1;
     prevTxCountRef.current = recentTxCount;
@@ -185,19 +177,29 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
     group.scale.set(sclX, sclY, sclX);
     group.position.y = currentHeight / 2;
 
-    // Plinth & atap tetap tipis di dunia (0.12/0.15) — counter-scale sumbu Y
-    // terhadap group yang sudah diskalakan tinggi bangunan (lebar x/z otomatis
-    // mengikuti group: 1.05× untuk plinth & atap — radius efektif plinth max
-    // 1.158, lihat DataRiver untuk clearance sungai).
-    const plinth = plinthRef.current;
-    if (plinth) {
-      plinth.scale.set(1.05, PLINTH_HEIGHT / sclY, 1.05);
-      plinth.position.y = (PLINTH_HEIGHT / 2 - currentHeight / 2) / sclY;
+    // Podium/lobby: tinggi dunia tetap (PODIUM_HEIGHT), lebar PODIUM_WIDTH×
+    // tower (radius efektif max 1.12 < 1.158 — clearance sungai DataRiver).
+    // Counter-scale sumbu Y terhadap group yang diskalakan tinggi bangunan.
+    const podium = podiumRef.current;
+    if (podium) {
+      podium.scale.set(PODIUM_WIDTH, PODIUM_HEIGHT / sclY, PODIUM_WIDTH);
+      podium.position.y = (PODIUM_HEIGHT / 2 - currentHeight / 2) / sclY;
     }
+
+    // Cap atap/parapet: melekat di atas stack TERATAS (setback → cap lebih
+    // kecil), tinggi dunia tetap ROOF_HEIGHT. Ikut pulse/hover via group.
     const roof = roofRef.current;
     if (roof) {
-      roof.scale.set(1.05, ROOF_HEIGHT / sclY, 1.05);
+      roof.scale.set(topStackWidth * ROOF_MARGIN, ROOF_HEIGHT / sclY, topStackWidth * ROOF_MARGIN);
       roof.position.y = (currentHeight / 2 + ROOF_HEIGHT / 2) / sclY;
+    }
+
+    // RooftopDetails membaca ini untuk menempelkan AC/antena/water tower di
+    // atas cap — mengikuti lerp/pulse/hover, bukan angka target statis.
+    const live = liveRef.current;
+    if (live) {
+      live.topY = (currentHeight + sclY) / 2 + ROOF_HEIGHT;
+      live.halfTopWidth = (sclX / 2) * topStackWidth;
     }
 
     // L21: pulse ke emissiveIntensity (+pulse x 0.5), perilaku hover/selected
@@ -234,83 +236,90 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
   return (
     <group position={position}>
       {/*
-        ARSITEKTUR baru (AC rekonstruksi): body utama + plinth/fondasi + atap/
-        parapet dalam SATU group animasi.
-        - Geometry SATU KALI (unit) — ukuran data lewat transform group.
-        - useFrame me-lerp scale/posisi group; mesh anak statis.
-        - Group origin = DASAR bangunan (body unit di posisi [0,0,0] → base
-          menempel lantai, bukan melayang di h/2).
-        - Outline = child group → otomatis mengikuti lerp/pulse/hover (1.08×).
+        ARSITEKTUR baru: tower fasad prosedural + podium lobby + cap atap,
+        semua dalam SATU group animasi (origin = dasar bangunan).
+        - Geometri tower di-cache per TxType (merge stack setback) — SATU mesh
+          → 1 draw call walau bertingkat.
+        - useFrame me-lerp scale/posisi group; mesh anak counter-scale Y.
+        - Podium 1.12× lebar tower → bangunan "tumbuh dari jalan".
       */}
       <group
         ref={groupRef}
         position={[0, height / 2, 0]}
         scale={[width, height, width]}
       >
-        {/* Body utama — jendela CanvasTexture (map + emissiveMap, 1 material).
-            Unit box ±0.5 di origin group → world span [0, height]. */}
+        {/* Tower — merge stack + tekstur jendela per lantai (map+emissiveMap).
+            Kaca arketipe glass memanfaatkan Environment preset="city" via
+            envMapIntensity (refleksi langit di kaca biru gelap). */}
         <mesh
-          position={[0, 0, 0]}
+          geometry={towerGeometry}
           castShadow
           receiveShadow
           onPointerOver={handlePointerOver}
           onPointerOut={handlePointerOut}
           onClick={handleClick}
         >
-          <boxGeometry args={[1, 1, 1]} />
           {/* color/emissive/emissiveIntensity dimiliki useFrame (lerp + pulse) */}
           <meshStandardMaterial
             ref={matRef}
-            map={windowTexture}
-            emissiveMap={windowTexture}
-            metalness={0.35}
-            roughness={0.4}
+            map={facade.map}
+            emissiveMap={facade.emissiveMap}
+            metalness={facadeParams.metalness}
+            roughness={facadeParams.roughness}
+            envMapIntensity={facadeParams.envMapIntensity}
             transparent={avgGasUsed === 0}
             opacity={avgGasUsed === 0 ? 0.6 : 1}
           />
         </mesh>
 
-        {/* Plinth/fondasi: 1.05× lebar body (radius efektif max 1.158 — lihat
-            DataRiver untuk clearance sungai), tipis 0.12 — ikut memudar saat
-            avgGasUsed === 0 (transparent di material masing-masing).
-            Handler pointer sama dengan body → tidak ada dead-zone hover/click. */}
+        {/* Podium/lobby: batu gelap + pita kaca pintu masuk menyala (emissive).
+            1.12× lebar tower (radius efektif max 1.12 < 1.158 — clearance
+            sungai DataRiver), tinggi dunia tetap 0.34 (~2 lantai stylized).
+            Handler pointer sama dengan tower → tidak ada dead-zone hover/click. */}
         <mesh
-          ref={plinthRef}
-          position={[0, (PLINTH_HEIGHT / 2 - height / 2) / (height * hoverBoost), 0]}
-          scale={[1.05, PLINTH_HEIGHT / (height * hoverBoost), 1.05]}
+          ref={podiumRef}
+          geometry={podiumGeometry}
+          position={[0, (PODIUM_HEIGHT / 2 - height / 2) / (height * hoverBoost), 0]}
+          scale={[PODIUM_WIDTH, PODIUM_HEIGHT / (height * hoverBoost), PODIUM_WIDTH]}
+          castShadow
           receiveShadow
           onPointerOver={handlePointerOver}
           onPointerOut={handlePointerOut}
           onClick={handleClick}
         >
-          <boxGeometry args={[1, 1, 1]} />
           <meshStandardMaterial
-            color={plinthColor}
-            roughness={0.6}
-            metalness={0.2}
+            ref={podiumMatRef}
+            map={podiumTextures.map}
+            emissiveMap={podiumTextures.emissiveMap}
+            color={podiumColor}
+            emissiveIntensity={0.8}
+            metalness={0.25}
+            roughness={0.55}
+            envMapIntensity={0.5}
             transparent={avgGasUsed === 0}
             opacity={avgGasUsed === 0 ? 0.6 : 1}
           />
         </mesh>
 
-        {/* Atap/parapet: scale x/z lokal 1.05 → lebar atap = width × 1.05
-            OTOMATIS mengikuti width aktual bangunan (termasuk pulse/hover —
-            karena di dalam group berskala). Tipis 0.15, metalness tinggi,
-            warna senada lebih gelap (dihitung sekali, bukan per frame).
-            Handler pointer sama dengan body → tidak ada dead-zone hover/click. */}
+        {/* Cap atap/parapet: menutup stack teratas (lebar mengikuti arketipe —
+            setback → cap lebih kecil). Metalness tinggi, warna senada lebih
+            gelap (lerp via useFrame, dihitung tanpa alokasi).
+            Handler pointer sama dengan tower → tidak ada dead-zone hover/click. */}
         <mesh
           ref={roofRef}
           position={[0, (height / 2 + ROOF_HEIGHT / 2) / (height * hoverBoost), 0]}
-          scale={[1.05, ROOF_HEIGHT / (height * hoverBoost), 1.05]}
+          scale={[topStackWidth * ROOF_MARGIN, ROOF_HEIGHT / (height * hoverBoost), topStackWidth * ROOF_MARGIN]}
           onPointerOver={handlePointerOver}
           onPointerOut={handlePointerOut}
           onClick={handleClick}
         >
           <boxGeometry args={[1, 1, 1]} />
           <meshStandardMaterial
+            ref={roofMatRef}
             color={roofColor}
             metalness={0.7}
             roughness={0.3}
+            envMapIntensity={0.8}
             transparent={avgGasUsed === 0}
             opacity={avgGasUsed === 0 ? 0.6 : 1}
           />
@@ -319,7 +328,7 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
         {/* Selected outline via wireframe box — child group: skala lokal statis
             1.08× group (AC), mengikuti animasi group tanpa update per frame.
             Posisi origin group (dasar bangunan) + scale y 1.02 → membungkus
-            body [0, height] tanpa melayang. */}
+            tower [0, height] tanpa melayang. */}
         {isSelected && (
           <mesh position={[0, 0, 0]} scale={[1.08, 1.02, 1.08]}>
             <boxGeometry args={[1, 1, 1]} />
@@ -330,8 +339,9 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
 
       {/* Floating label — wrapped in <Billboard> agar selalu menghadap kamera
           (drei <Text> tidak auto-billboard). Di luar group animasi → tidak ikut
-          scale bangunan (perilaku lama dipertahankan). */}
-      <Billboard position={[0, height + 0.7, 0]}>
+          scale bangunan (perilaku lama dipertahankan). Naik ke +1.0 agar di
+          atas antena rooftop (maks ~0.95 dari dasar atap). */}
+      <Billboard position={[0, height + 1.0, 0]}>
         <Text
           fontSize={0.3}
           color="#fff"
@@ -346,9 +356,10 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
         </Text>
       </Billboard>
 
-      {/* Secondary small label for gas price when active */}
+      {/* Secondary small label for gas price when active — di atas water tower
+          (maks ~0.47 dari dasar atap). */}
       {avgGasPrice > 0 && (
-        <Billboard position={[0, height + 0.35, 0]}>
+        <Billboard position={[0, height + 0.52, 0]}>
           <Text
             fontSize={0.14}
             color={baseColor}

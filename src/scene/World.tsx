@@ -6,6 +6,9 @@ import { GasParticles } from './GasParticles'
 import { DataRiver } from './DataRiver'
 import { SkyDome } from './SkyDome'
 import { Vegetation } from './Vegetation'
+import { RooftopDetails } from './BuildingFacade'
+import { RoadNetwork } from './RoadNetwork'
+import { Traffic } from './Traffic'
 
 class EnvironmentBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false }
@@ -36,10 +39,11 @@ const SIDEWALK_STRIPS: { x: number; z: number; y: number; size: [number, number]
 ];
 
 // Jalan tipis: 1 strip sejajar sumbu X di z=-2 (koridor antara baris z=-4
-// dan z=0). Koridor z=2 dipakai sungai DataRiver — road tidak boleh
-// bertindihan dengan air/bank (sungai z ∈ [1.09, 2.91]).
+// dan z=0). Lebar disamakan ring avenue (1.6) agar menyambung visual dengan
+// RoadNetwork — koridor z=2 dipakai sungai DataRiver (road tidak boleh
+// bertindihan dengan air/bank, sungai z ∈ [1.09, 2.91]).
 const ROAD_STRIPS: { z: number; size: [number, number] }[] = [
-  { z: -2, size: [26, 0.4] },
+  { z: -2, size: [26, 1.6] },
 ];
 
 /**
@@ -123,6 +127,19 @@ export function World({ children }: WorldProps) {
 
       {/* Vegetasi statis: rumput + pohon perimeter — InstancedMesh, 4 draw calls */}
       <Vegetation />
+
+      {/* Detail rooftop global (AC/antena/water tower) — 1 InstancedMesh per
+          jenis untuk SELURUH kota; posisi mengikuti tower yang di-lerp via
+          registry live-state di BuildingFacade. */}
+      <RooftopDetails />
+
+      {/*
+        Jaringan jalan raya + lalu-lalang mobil (kota hidup mengikuti TPS).
+        Diletakkan terpisah (bukan di dalam EnvironmentBoundary) agar gagal
+        preload env tidak mematikan jalan/mobil.
+      */}
+      <RoadNetwork />
+      <Traffic />
 
       <EnvironmentBoundary>
         <Suspense fallback={null}>
