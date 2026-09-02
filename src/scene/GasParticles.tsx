@@ -4,6 +4,7 @@ import * as THREE from 'three'
 import { TxType } from '@/data/tx-classifier'
 import { useGasStore } from '@/store/gas-store'
 import { getBuildingPosition } from './layout'
+import { selectNewTxs } from './particle-spawn'
 
 const MAX_PARTICLES = 500
 
@@ -139,23 +140,16 @@ export function GasParticles() {
     if (!mesh) return
 
     // ---- F1: spawn berbasis hash (tahan ring buffer penuh) ----
-    // recentTxs newest-first: spawn semua tx lebih baru dari hash terakhir
-    // yang di-spawn, lalu update ref. Edge:
-    //  - recentTxs kosong      → ref dipertahankan (tidak direset).
-    //  - wrap/replace tanpa tx baru (recentTxs[0].hash === ref) → tidak spawn.
-    //  - ref sudah keluar dari buffer (>200 tx baru sejak frame lalu) →
-    //    scan penuh, seluruh isi buffer dianggap baru → spawn semua.
+    // Logika seleksi diekstrak ke ./particle-spawn (pure) agar bisa
+    // di-regression-test tanpa WebGL — lihat __tests__/particle-spawn.test.ts.
     let spawned = false
-    if (recentTxs.length > 0) {
-      const lastHash = lastSpawnedHashRef.current
-      if (recentTxs[0].hash !== lastHash) {
-        for (const tx of recentTxs) {
-          if (tx.hash === lastHash) break
-          spawnParticle(tx.txType, Number(tx.gasUsed), activeSlots)
-          spawned = true
-        }
-        lastSpawnedHashRef.current = recentTxs[0].hash
+    const newTxs = selectNewTxs(recentTxs, lastSpawnedHashRef.current)
+    if (newTxs.length > 0) {
+      for (const tx of newTxs) {
+        spawnParticle(tx.txType, Number(tx.gasUsed), activeSlots)
       }
+      lastSpawnedHashRef.current = recentTxs[0].hash
+      spawned = true
     }
 
     // ---- F2: jalur idle — skip loop + upload matrix sepenuhnya ----
