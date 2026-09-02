@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { TxType } from "@/data/tx-classifier";
 import { useGasStore } from "@/store/gas-store";
-import { formatEth, formatGasPrice, formatNumber } from "@/utils/format";
+import { formatEth, formatGasPrice, formatNumber, formatUsd } from "@/utils/format";
+import { ethToUsd } from "@/utils/gas-math";
 import { TX_COLORS, TX_LABELS, TX_ORDER } from "./tx-theme";
 
 type SortKey = "type" | "avgGas" | "avgPrice" | "txCount" | "fee";
@@ -41,6 +42,7 @@ const styles: Record<string, React.CSSProperties> = {
     userSelect: "none" as const,
   },
   td: { padding: "6px 8px", borderBottom: "1px solid rgba(255,255,255,0.05)", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
+  feeUsd: { fontSize: 9, color: "rgba(255,255,255,0.45)", marginTop: 1 },
   typeCell: { display: "flex", alignItems: "center", gap: 7, fontFamily: "Inter, system-ui, sans-serif", fontWeight: 600 },
   dot: { width: 8, height: 8, borderRadius: 999, flexShrink: 0 },
   sortHint: { opacity: 0.6, marginLeft: 4, fontSize: 9 },
@@ -60,6 +62,8 @@ function rowBackground(selected: boolean, hovered: boolean, color: string): stri
  */
 export function GasTable() {
   const gasMetrics = useGasStore((s) => s.gasMetrics);
+  // Selector granular (primitive) — hindari subscribe seluruh store.
+  const ethUsdPrice = useGasStore((s) => s.networkStats.ethUsdPrice);
   const selectedType = useGasStore((s) => s.selectedType);
   const hoveredType = useGasStore((s) => s.hoveredType);
   const selectType = useGasStore((s) => s.selectType);
@@ -159,7 +163,12 @@ export function GasTable() {
               <td style={styles.td}>{hasData ? formatNumber(m.avgGasUsed) : "—"}</td>
               <td style={styles.td}>{hasData ? formatGasPrice(m.avgGasPrice) : "—"}</td>
               <td style={styles.td}>{formatNumber(m.totalTxCount)}</td>
-              <td style={styles.td}>{hasData ? formatEth(m.totalFeeEth) : "—"}</td>
+              <td style={styles.td}>
+                {hasData ? formatEth(m.totalFeeEth) : "—"}
+                {hasData && ethUsdPrice !== null && formatUsd(ethToUsd(m.totalFeeEth, ethUsdPrice)) !== "" && (
+                  <div style={styles.feeUsd}>≈ {formatUsd(ethToUsd(m.totalFeeEth, ethUsdPrice))}</div>
+                )}
+              </td>
             </tr>
           );
         })}

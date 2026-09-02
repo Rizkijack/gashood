@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useGasStore } from "@/store/gas-store";
-import { formatEth, formatGasPrice, formatNumber, formatTxHash } from "@/utils/format";
+import { formatEth, formatGasPrice, formatNumber, formatTxHash, formatUsd } from "@/utils/format";
+import { ethToUsd } from "@/utils/gas-math";
 import { TX_COLORS, TX_LABELS } from "./tx-theme";
 
 const EXPLORER = "https://robinhoodchain.blockscout.com/tx/";
@@ -66,6 +67,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   txHash: { color: "rgba(255,255,255,0.8)", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", textDecoration: "none" },
   txMeta: { marginLeft: "auto", color: "rgba(255,255,255,0.5)", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", display: "flex", gap: 8 },
+  statValueUsd: { fontSize: 10, color: "rgba(255,255,255,0.45)", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", marginTop: 1 },
   emptyTxs: { color: "rgba(255,255,255,0.4)", fontSize: 11, padding: "4px 0" },
 };
 
@@ -78,6 +80,8 @@ export function DetailPanel() {
   const selectedType = useGasStore((s) => s.selectedType);
   const metric = useGasStore((s) => (s.selectedType ? s.gasMetrics.get(s.selectedType) : undefined));
   const recentTxs = useGasStore((s) => s.recentTxs);
+  // Selector granular (primitive) — harga USD jarang berubah (throttle 60s).
+  const ethUsdPrice = useGasStore((s) => s.networkStats.ethUsdPrice);
   const selectType = useGasStore((s) => s.selectType);
 
   const typeRecentTxs = useMemo(() => {
@@ -135,6 +139,9 @@ export function DetailPanel() {
             <div style={styles.statCard}>
               <div style={styles.statLabel}>Total Fee (ETH)</div>
               <div style={styles.statValue}>{hasData ? formatEth(metric.totalFeeEth) : "—"}</div>
+              {hasData && ethUsdPrice !== null && formatUsd(ethToUsd(metric.totalFeeEth, ethUsdPrice)) !== "" && (
+                <div style={styles.statValueUsd}>≈ {formatUsd(ethToUsd(metric.totalFeeEth, ethUsdPrice))}</div>
+              )}
             </div>
             <div style={styles.statCard}>
               <div style={styles.statLabel}>Tx Count</div>
@@ -151,6 +158,7 @@ export function DetailPanel() {
             <div style={styles.txList}>
               {typeRecentTxs.map((tx) => {
                 const feeEth = Number(tx.fee) / 1e18;
+                const feeUsd = ethUsdPrice !== null ? formatUsd(ethToUsd(feeEth, ethUsdPrice)) : "";
                 return (
                   <div key={tx.hash} style={styles.txItem}>
                     <a href={`${EXPLORER}${tx.hash}`} target="_blank" rel="noreferrer" style={styles.txHash} title={tx.hash}>
@@ -159,6 +167,7 @@ export function DetailPanel() {
                     <span style={styles.txMeta}>
                       <span>{formatNumber(Number(tx.gasUsed))}</span>
                       <span>{formatEth(feeEth)}</span>
+                      {feeUsd !== "" && <span title="Fee (USD)">≈ {feeUsd}</span>}
                     </span>
                   </div>
                 );

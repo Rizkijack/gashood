@@ -1,12 +1,22 @@
 /**
  * Test gas collector (BUILD_STEPS.md Langkah 8).
- * '@/data/rpc-client' di-mock penuh — processBlock & aggregateMetrics diuji
+ * '@/data/rpc-client' dan '@/data/blockscout-client' di-mock penuh —
+ * processBlock, aggregateMetrics, parseCoinPrice & refreshEthPriceIfDue diuji
  * murni tanpa network. Loop polling (startCollecting) SENGAJA tidak pernah
  * dinyalakan (while(true)); state module-scope collector (currentInterval,
  * isRunning) tidak perlu direset karena tidak ada test yang memulai loop.
+ * Throttle harga (lastPriceFetchAt) dikendalikan lewat mock Date.now, bukan
+ * vi.resetModules() + dynamic import — import statis dipertahankan agar test
+ * memakai instance useGasStore yang sama dengan asersi.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { aggregateMetrics, processBlock, stopCollecting } from '@/data/gas-collector'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  aggregateMetrics,
+  parseCoinPrice,
+  processBlock,
+  refreshEthPriceIfDue,
+  stopCollecting,
+} from '@/data/gas-collector'
 import { TxType, type ClassifiedTransaction, type TransactionData } from '@/data/tx-classifier'
 import { useGasStore } from '@/store/gas-store'
 
@@ -17,13 +27,19 @@ const rpc = vi.hoisted(() => ({
   batchGetReceipts: vi.fn(),
 }))
 
+const blockscout = vi.hoisted(() => ({
+  getStats: vi.fn(),
+}))
+
 vi.mock('@/data/rpc-client', () => rpc)
+vi.mock('@/data/blockscout-client', () => blockscout)
 
 beforeEach(() => {
   rpc.getBlock.mockReset()
   rpc.getGasPrice.mockReset()
   rpc.getLatestBlockNumber.mockReset()
   rpc.batchGetReceipts.mockReset()
+  blockscout.getStats.mockReset()
 })
 
 let seq = 0
@@ -192,5 +208,74 @@ describe('state module-scope collector (currentInterval / isRunning)', () => {
   it('stopCollecting tanpa start → aman, isCollecting false (loop tidak dinyalakan di test)', () => {
     expect(() => stopCollecting()).not.toThrow()
     expect(useGasStore.getState().isCollecting).toBe(false)
+  })
+})
+
+describe('parseCoinPrice (harga ETH dari Blockscout /stats)', () => {
+  it('happy: string desimal → number', () => {
+    expect(parseCoinPrice('3214.56')).toBe(3214.56)
+    expect(parseCoinPrice('4200')).toBe(4200)
+  })
+
+  it('edge: non-numerik → null', () => {
+    expect(parseCoinPrice('abc')).toBeNull()
+    expect(parseCoinPrice('')).toBeNull()
+  })
+
+  it('edge: NaN/Infinity hasil parse → null', () => {
+    expect(parseCoinPrice('NaN')).toBeNull()
+    expect(parseCoinPrice('Infinity')).toBeNull()
+  })
+
+  it('guard: harga <= 0 → null ("0"/negatif tidak boleh meracuni tampilan USD)', () => {
+    expect(parseCoinPrice('0')).toBeNull()
+    expect(parseCoinPrice('-5')).toBeNull()
+    // Nilai valid tetap lolos
+    expect(parseCoinPrice('2393.83')).toBe(2393.83)
+    expect(parseCoinPrice('abc')).toBeNull()
+  })
+})
+
+describe('refreshEthPriceIfDue (harga ETH Blockscout — throttle 60s, non-fatal)', () => {
+  let nowMs: number
+
+  beforeEach(() => {
+    nowMs = 1_000_000
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('NON-FATAL: getStats reject → consecutiveFailures 0, error null, metrik block tak tersentuh', async () => {
+    blockscout.getStats.mockRejectedValue(new Error('Blockscout down'))
+    const metricsBefore = useGasStore.getState().gasMetrics
+    const txsBefore = useGasStore.getState().recentTxs
+
+    await expect(refreshEthPriceIfDue(0)).resolves.toBeUndefined()
+
+    const state = useGasStore.getState()
+    expect(state.consecutiveFailures).toBe(0)
+    expect(state.error).toBeNull()
+    // Referensi sama → metrik block & feed tidak pernah di-replace oleh jalur harga
+    expect(state.gasMetrics).toBe(metricsBefore)
+    expect(state.recentTxs).toBe(txsBefore)
+    expect(state.networkStats.ethUsdPrice).toBeNull()
+  })
+
+  it('THROTTLE: 2 panggilan jeda <60s → getStats hanya 1×; setelah 60s fetch lagi', async () => {
+    blockscout.getStats.mockResolvedValue({ coin_price: '2393.83' })
+
+    nowMs = 5_000_000 // jauh dari timestamp test NON-FATAL (1e6) → throttle terlewati
+    await refreshEthPriceIfDue(0)
+
+    nowMs += 59_999 // jeda < PRICE_FETCH_INTERVAL_MS (60s)
+    await refreshEthPriceIfDue(0)
+    expect(blockscout.getStats).toHaveBeenCalledTimes(1)
+
+    nowMs += 60_000 // window 60s terlewati → boleh menembak lagi
+    await refreshEthPriceIfDue(0)
+    expect(blockscout.getStats).toHaveBeenCalledTimes(2)
   })
 })

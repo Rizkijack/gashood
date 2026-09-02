@@ -6,7 +6,7 @@
  *   - Dokumen: formatEth(0.000018) → "0.000018 ETH" | Aktual: "18.00 μETH"
  */
 import { describe, expect, it } from 'vitest'
-import { formatBlockNumber, formatEth, formatGasPrice, formatNumber, formatTxHash } from '@/utils/format'
+import { formatBlockNumber, formatEth, formatGasPrice, formatNumber, formatTxHash, formatUsd } from '@/utils/format'
 
 describe('formatGasPrice', () => {
   it('happy: < 1 gwei → 2 desimal', () => {
@@ -94,5 +94,28 @@ describe('formatBlockNumber', () => {
   it('happy: prefix "#"', () => {
     expect(formatBlockNumber(42)).toBe('#42')
     expect(formatBlockNumber(0)).toBe('#0')
+  })
+})
+
+describe('formatUsd', () => {
+  it('happy: ≥ 1 → pemisah ribuan + 2 desimal', () => {
+    expect(formatUsd(1234.56)).toBe('$1,234.56')
+    expect(formatUsd(1)).toBe('$1.00')
+  })
+
+  it('happy: ≥ 0.01 → 4 desimal', () => {
+    expect(formatUsd(0.05412)).toBe('$0.0541')
+    expect(formatUsd(0.01)).toBe('$0.0100')
+  })
+
+  it('edge: < 0.01 → "$<0.01" (termasuk 0)', () => {
+    expect(formatUsd(0.009)).toBe('$<0.01')
+    expect(formatUsd(0)).toBe('$<0.01')
+  })
+
+  it('edge: NaN/Infinity → string kosong (UI skip render)', () => {
+    expect(formatUsd(NaN)).toBe('')
+    expect(formatUsd(Infinity)).toBe('')
+    expect(formatUsd(-Infinity)).toBe('')
   })
 })

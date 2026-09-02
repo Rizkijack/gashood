@@ -26,3 +26,14 @@ export function formatNumber(n: number): string {
 export function formatBlockNumber(n: number): string {
   return `#${n.toLocaleString()}`
 }
+
+/**
+ * Format nilai USD. Return string kosong untuk input non-finite — pemanggil
+ * UI me-skip render (jangan tampil "undefined"/"NaN").
+ */
+export function formatUsd(usd: number): string {
+  if (!Number.isFinite(usd)) return ""
+  if (usd >= 1) return `$${usd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  if (usd >= 0.01) return `$${usd.toFixed(4)}`
+  return "$<0.01"
+}

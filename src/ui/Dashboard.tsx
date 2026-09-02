@@ -1,5 +1,6 @@
 import { useGasStore } from "@/store/gas-store";
-import { formatBlockNumber, formatEth, formatGasPrice, formatNumber } from "@/utils/format";
+import { formatBlockNumber, formatEth, formatGasPrice, formatNumber, formatUsd } from "@/utils/format";
+import { ethToUsd } from "@/utils/gas-math";
 
 const styles: Record<string, React.CSSProperties> = {
   bar: {
@@ -51,6 +52,7 @@ const styles: Record<string, React.CSSProperties> = {
   statItem: {},
   statLabel: { fontSize: 9, color: "rgba(255,255,255,0.45)", letterSpacing: "0.06em", textTransform: "uppercase" as const },
   statValue: { fontSize: 13, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontWeight: 600, color: "#fff" },
+  statSub: { fontSize: 9, color: "rgba(255,255,255,0.45)", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", marginTop: 1 },
 };
 
 /**
@@ -61,6 +63,8 @@ export function Dashboard() {
   const networkStats = useGasStore((s) => s.networkStats);
   const isCollecting = useGasStore((s) => s.isCollecting);
   const gasMetrics = useGasStore((s) => s.gasMetrics);
+  // Selector granular (primitive) — harga USD berubah jarang (throttle 60s).
+  const ethUsdPrice = useGasStore((s) => s.networkStats.ethUsdPrice);
 
   // Avg fee across all observed txs: sum(fee) / sum(count)
   let totalFee = 0;
@@ -72,6 +76,8 @@ export function Dashboard() {
   const avgFee = totalCount > 0 ? totalFee / totalCount : 0;
 
   const hasData = networkStats.totalTransactions > 0;
+  // "" (non-finite guard di formatUsd) → skip render, jangan tampil "≈ " kosong.
+  const avgFeeUsd = ethUsdPrice !== null && hasData ? formatUsd(ethToUsd(avgFee, ethUsdPrice)) : "";
 
   return (
     <div style={styles.bar}>
@@ -116,11 +122,18 @@ export function Dashboard() {
         <div style={styles.statItem}>
           <div style={styles.statLabel}>Avg Fee</div>
           <div style={styles.statValue}>{hasData ? formatEth(avgFee) : "—"}</div>
+          {avgFeeUsd !== "" && <div style={styles.statSub}>≈ {avgFeeUsd}</div>}
         </div>
         <div style={styles.statItem}>
           <div style={styles.statLabel}>Total Tx</div>
           <div style={styles.statValue}>{formatNumber(networkStats.totalTransactions)}</div>
         </div>
+        {ethUsdPrice !== null && (
+          <div style={styles.statItem}>
+            <div style={styles.statLabel}>ETH Price</div>
+            <div style={styles.statValue}>{formatUsd(ethUsdPrice)}</div>
+          </div>
+        )}
       </div>
     </div>
   );

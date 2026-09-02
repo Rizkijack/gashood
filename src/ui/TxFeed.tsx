@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
 import type { ClassifiedTransaction } from "@/data/tx-classifier";
 import { useGasStore } from "@/store/gas-store";
-import { formatEth, formatNumber, formatTxHash } from "@/utils/format";
+import { formatEth, formatNumber, formatTxHash, formatUsd } from "@/utils/format";
+import { ethToUsd } from "@/utils/gas-math";
 import { TX_COLORS, TX_LABELS } from "./tx-theme";
 
 const MAX_RENDER = 50;
@@ -67,7 +68,10 @@ const styles: Record<string, React.CSSProperties> = {
 
 function TxItem({ tx }: { tx: ClassifiedTransaction }) {
   const color = TX_COLORS[tx.txType];
+  // Selector granular (primitive) di level item — harga USD jarang berubah.
+  const ethUsdPrice = useGasStore((s) => s.networkStats.ethUsdPrice);
   const feeEth = Number(tx.fee) / 1e18;
+  const feeUsd = ethUsdPrice !== null ? formatUsd(ethToUsd(feeEth, ethUsdPrice)) : "";
   return (
     <div style={styles.item}>
       <a
@@ -85,6 +89,7 @@ function TxItem({ tx }: { tx: ClassifiedTransaction }) {
       <span style={styles.meta}>
         <span title="Gas used">{formatNumber(Number(tx.gasUsed))}</span>
         <span title="Fee">{formatEth(feeEth)}</span>
+        {feeUsd !== "" && <span title="Fee (USD)">≈ {feeUsd}</span>}
       </span>
     </div>
   );

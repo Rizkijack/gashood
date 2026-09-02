@@ -1,4 +1,5 @@
 import { getBlock, getGasPrice, getLatestBlockNumber, batchGetReceipts } from '@/data/rpc-client'
+import { getStats } from '@/data/blockscout-client'
 import { classifyTransaction, TxType, type ClassifiedTransaction, type TransactionData } from '@/data/tx-classifier'
 import { useGasStore, type GasMetric } from '@/store/gas-store'
 import { calculateTotalFee, weiToGwei, weiToEth } from '@/utils/gas-math'
@@ -37,6 +38,47 @@ function adaptInterval(success: boolean) {
     currentInterval = Math.max(currentInterval - 500, BASE_INTERVAL)
   } else {
     currentInterval = Math.min(currentInterval * 2, MAX_INTERVAL)
+  }
+}
+
+/** Jarak minimum antar permintaan harga ke Blockscout /stats. */
+const PRICE_FETCH_INTERVAL_MS = 60_000
+let lastPriceFetchAt = 0
+
+/**
+ * Murni: parse `coin_price` Blockscout (string desimal) → number, atau null
+ * bila tidak valid — termasuk harga <= 0: nilai "0"/negatif dari API rusak
+ * tidak boleh meracuni semua tampilan USD. UI menyembunyikan bagian USD
+ * saat null.
+ */
+export function parseCoinPrice(raw: string): number | null {
+  const parsed = Number.parseFloat(raw)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
+/**
+ * Refresh harga ETH (USD) dari Blockscout /stats — MAKSIMAL sekali per 60 detik.
+ * NON-FATAL: kegagalan fetch hanya console.warn, TIDAK mengganggu loop block,
+ * TIDAK menaikkan consecutiveFailures polling block.
+ * (Diekspor untuk test; perilaku internal tetap sama.)
+ */
+export async function refreshEthPriceIfDue(myRun: number): Promise<void> {
+  const now = Date.now()
+  if (now - lastPriceFetchAt < PRICE_FETCH_INTERVAL_MS) return
+  // Timestamp di-set saat MENCOBA (bukan setelah sukses) agar kegagalan pun
+  // tidak menembak Blockscout tiap 3 detik — retry paling cepat 60s berikutnya.
+  lastPriceFetchAt = now
+
+  try {
+    const stats = await getStats()
+    // Audit B6-consistency: jangan tulis store dari generation lama / setelah stop.
+    if (myRun !== runId || !isRunning) return
+    const price = parseCoinPrice(stats.coin_price)
+    if (price !== null) {
+      useGasStore.getState().setEthUsdPrice(price)
+    }
+  } catch (error) {
+    console.warn('[gas-collector] Gagal fetch harga ETH dari Blockscout (non-fatal):', error)
   }
 }
 
@@ -177,6 +219,15 @@ async function runCycle(myRun: number): Promise<boolean> {
     if (txs.length > 0) {
       useGasStore.getState().updateFromBlock(txs, Number(blockNumber), gasPriceWei)
     }
+
+    // Harga ETH (enrichment, non-fatal): fire-and-forget — JANGAN await.
+    // Blockscout bisa menggantung sampai 10s (AbortSignal.timeout); await di
+    // sini menunda cadence blok 3s untuk data yang sekadar memperkaya UI.
+    // Aman dari unhandled rejection karena try/catch ada DI DALAM
+    // refreshEthPriceIfDue — promise-nya tidak pernah reject, kegagalan tidak
+    // pernah sampai catch blok bawah, jadi consecutiveFailures polling block
+    // tetap tak tersentuh.
+    void refreshEthPriceIfDue(myRun)
 
     adaptInterval(true)
     // Audit B5: baca ulang error SETELAH await (bukan snapshot lama).

@@ -45,6 +45,7 @@ function makeInitialState() {
       tps: 0,
       totalTransactions: 0,
       lastBlockNumber: 0,
+      ethUsdPrice: null,
     },
     selectedType: null as TxType | null,
     hoveredType: null as TxType | null,
@@ -182,6 +183,31 @@ describe('recentTxs ring buffer (Langkah 9)', () => {
     expect(recent[0]!.hash).toBe(newTxs[0]!.hash) // terbaru di depan
     expect(recent[99]!.hash).toBe(newTxs[99]!.hash)
     expect(recent[100]!.hash).toBe(oldTxs[0]!.hash) // lama menyusul di belakang
+  })
+})
+
+describe('setEthUsdPrice (harga ETH USD)', () => {
+  it('mengubah networkStats.ethUsdPrice tanpa mengubah field lain', () => {
+    useGasStore.getState().setEthUsdPrice(3214.56)
+
+    const stats = useGasStore.getState().networkStats
+    expect(stats.ethUsdPrice).toBe(3214.56)
+    expect(stats.lastBlockNumber).toBe(0)
+    expect(stats.currentGasPrice).toBe(0)
+  })
+
+  it('null aman — kembali ke default (UI sembunyikan bagian USD)', () => {
+    useGasStore.getState().setEthUsdPrice(100)
+    useGasStore.getState().setEthUsdPrice(null)
+
+    expect(useGasStore.getState().networkStats.ethUsdPrice).toBeNull()
+  })
+
+  it('updateFromBlock mempertahankan ethUsdPrice yang sudah diset (tidak flicker ke null)', () => {
+    useGasStore.getState().setEthUsdPrice(3000)
+    useGasStore.getState().updateFromBlock([makeTx(TxType.NATIVE_TRANSFER)], 5)
+
+    expect(useGasStore.getState().networkStats.ethUsdPrice).toBe(3000)
   })
 })
 

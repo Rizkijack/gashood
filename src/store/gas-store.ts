@@ -21,6 +21,8 @@ export interface NetworkStats {
   tps: number
   totalTransactions: number
   lastBlockNumber: number
+  /** Harga 1 ETH dalam USD (Blockscout /stats coin_price). null = belum tersedia → UI sembunyikan bagian USD. */
+  ethUsdPrice: number | null
 }
 
 export type TimeRange = '1m' | '5m' | '15m' | '1h'
@@ -47,6 +49,7 @@ export interface GasStore {
   setCollecting: (collecting: boolean) => void
   setError: (error: string | null) => void
   setConsecutiveFailures: (count: number) => void
+  setEthUsdPrice: (price: number | null) => void
   clearRecentTxs: () => void
 }
 
@@ -91,6 +94,7 @@ export const useGasStore = create<GasStore>((set, get) => ({
     tps: 0,
     totalTransactions: 0,
     lastBlockNumber: 0,
+    ethUsdPrice: null,
   },
   selectedType: null,
   hoveredType: null,
@@ -173,6 +177,8 @@ export const useGasStore = create<GasStore>((set, get) => ({
         tps,
         totalTransactions: prevStats.totalTransactions + txs.length,
         lastBlockNumber: blockNumber,
+        // Harga ETH di-set terpisah (throttle 60s) — pertahankan antar update block.
+        ethUsdPrice: prevStats.ethUsdPrice,
       },
     })
   },
@@ -188,5 +194,6 @@ export const useGasStore = create<GasStore>((set, get) => ({
   setCollecting: (collecting) => set({ isCollecting: collecting }),
   setError: (error) => set({ error }),
   setConsecutiveFailures: (count) => set({ consecutiveFailures: count }),
+  setEthUsdPrice: (price) => set((s) => ({ networkStats: { ...s.networkStats, ethUsdPrice: price } })),
   clearRecentTxs: () => set({ recentTxs: [] }),
 }))
