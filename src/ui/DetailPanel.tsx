@@ -88,7 +88,10 @@ export function DetailPanel() {
   if (!selectedType || !metric) return null;
 
   const color = TX_COLORS[selectedType];
-  const hasData = metric.totalTxCount > 0;
+  // Guard samakan dengan GasTable (avgGasPrice > 0 && totalTxCount > 0):
+  // totalTxCount > 0 tapi semua receipt tanpa harga (avgGasPrice 0) →
+  // minGasPrice bisa Infinity, jangan render "Infinity Gwei".
+  const hasData = metric.avgGasPrice > 0 && metric.totalTxCount > 0;
   const trendArrow = metric.trend === "up" ? "↗" : metric.trend === "down" ? "↘" : "→";
 
   return (

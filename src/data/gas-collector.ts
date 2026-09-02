@@ -18,6 +18,16 @@ let currentInterval = BASE_INTERVAL
 let lastBlockNumber = 0n
 let isRunning = false
 
+/**
+ * Generation token anti double-loop (race React StrictMode).
+ * StrictMode: cleanup `stopCollecting` lalu remount `startCollecting` di tick yang
+ * sama. Tanpa token, loop lama yang sedang tidur di `sleep()` bangun, melihat
+ * `isRunning` sudah `true` lagi (oleh start yang baru) → lanjut jalan → 2 loop
+ * concurrent. Dengan token: setiap start menaikkan `runId`; loop lama yang punya
+ * `myRun` lama mati di pemeriksaan pertama setelah SETIAP await.
+ */
+let runId = 0
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -140,9 +150,14 @@ export function aggregateMetrics(txs: ClassifiedTransaction[]): Map<TxType, GasM
 }
 
 /** Satu siklus polling: dedup block → processBlock → push ke store via updateFromBlock. */
-async function runCycle(): Promise<boolean> {
+async function runCycle(myRun: number): Promise<boolean> {
   try {
     const blockNumber = await getLatestBlockNumber()
+
+    // Stale generation / sudah stop → jangan lanjut.
+    if (myRun !== runId || !isRunning) {
+      return true
+    }
 
     if (blockNumber === lastBlockNumber) {
       adaptInterval(true)
@@ -151,9 +166,9 @@ async function runCycle(): Promise<boolean> {
 
     const [txs, gasPriceWei] = await Promise.all([processBlock(blockNumber), getGasPrice()])
 
-    // Audit B6: stop() bisa dipanggil saat request in-flight —
-    // jangan tulis ke store setelah stop.
-    if (!isRunning) {
+    // Audit B6: stop() bisa dipanggil saat request in-flight — jangan tulis ke
+    // store setelah stop ATAU dari generation lama (race StrictMode).
+    if (myRun !== runId || !isRunning) {
       return true
     }
 
@@ -169,30 +184,48 @@ async function runCycle(): Promise<boolean> {
       useGasStore.getState().setError(null)
     }
 
+    // Sukses → reset hitungan kegagalan beruntun (dipakai ErrorToast L31).
+    if (useGasStore.getState().consecutiveFailures !== 0) {
+      useGasStore.getState().setConsecutiveFailures(0)
+    }
+
     return true
   } catch (error) {
+    // Generation lama / sudah stop → jangan tulis error stale ke store.
+    if (myRun !== runId || !isRunning) {
+      return false
+    }
     adaptInterval(false)
-    useGasStore.getState().setError(error instanceof Error ? error.message : 'Unknown error')
+    const state = useGasStore.getState()
+    state.setError(error instanceof Error ? error.message : 'Unknown error')
+    // Increment kegagalan beruntun — ErrorToast pakai ini untuk pesan "data cache".
+    state.setConsecutiveFailures(state.consecutiveFailures + 1)
     return false
   }
 }
 
-async function pollingLoop(): Promise<void> {
-  while (isRunning) {
-    await runCycle()
-    if (!isRunning) break // audit B6
+async function pollingLoop(myRun: number): Promise<void> {
+  while (isRunning && myRun === runId) {
+    await runCycle(myRun)
+    if (!isRunning || myRun !== runId) break // audit B6 + race StrictMode
     await sleep(currentInterval)
+    // Bangun dari sleep: generation bisa sudah diganti (stop lalu start remount
+    // di tick sama) — loop lama HARUS mati di sini, bukan lanjut iterasi.
+    if (!isRunning || myRun !== runId) break
   }
 }
 
 export function startCollecting(): void {
   if (isRunning) return
-
+  // Catatan urutan: `++runId` SETELAH guard di atas. Double-start tanpa stop
+  // tidak boleh meng-invalidate loop yang sedang sehat; sedangkan alur
+  // StrictMode (stop → start) selalu lewat karena stop mematikan isRunning.
   isRunning = true
   lastBlockNumber = 0n
+  const myRun = ++runId
   useGasStore.getState().setCollecting(true)
 
-  void pollingLoop()
+  void pollingLoop(myRun)
 }
 
 export function stopCollecting(): void {
@@ -201,5 +234,7 @@ export function stopCollecting(): void {
 }
 
 export async function collectOnce(): Promise<boolean> {
-  return runCycle()
+  // One-shot manual: pakai generation berjalan (atau terakhir) agar guard
+  // stale-store tetap konsisten — tidak menulis ke store setelah stop.
+  return runCycle(runId)
 }

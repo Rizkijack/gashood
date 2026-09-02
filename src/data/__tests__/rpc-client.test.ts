@@ -118,7 +118,7 @@ describe('batchGetReceipts (Langkah 6)', () => {
     expect(client.getTransactionReceipt).toHaveBeenCalledTimes(20)
   })
 
-  it('45 hash → di-chunk, maksimal 20 request paralel per batch', async () => {
+  it('45 hash → di-chunk (20/chunk) dan chunk diproses paralel, bukan serial', async () => {
     let inFlight = 0
     let maxInFlight = 0
     client.getTransactionReceipt.mockImplementation(async () => {
@@ -134,8 +134,31 @@ describe('batchGetReceipts (Langkah 6)', () => {
 
     expect(receipts.size).toBe(45)
     expect(client.getTransactionReceipt).toHaveBeenCalledTimes(45)
-    // Tanpa chunking, maxInFlight akan mencapai 45
-    expect(maxInFlight).toBeLessThanOrEqual(20)
+    // 3 chunk (20+20+5) ≤ cap (4 chunk) → semua 45 request in-flight bersamaan,
+    // membuktikan paralelisme antar-chunk (implementasi serial lama mentok di 20).
+    expect(maxInFlight).toBe(45)
+  })
+
+  it('100 hash → 5 chunk: paralel antar-chunk TAPI ter-capung cap 4 chunk (80 request)', async () => {
+    let inFlight = 0
+    let maxInFlight = 0
+    client.getTransactionReceipt.mockImplementation(async () => {
+      inFlight += 1
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      await Promise.resolve()
+      inFlight -= 1
+      return receipt
+    })
+
+    const hashes = Array.from({ length: 100 }, (_, i) => hash(i))
+    const receipts = await batchGetReceipts(hashes)
+
+    expect(receipts.size).toBe(100)
+    expect(client.getTransactionReceipt).toHaveBeenCalledTimes(100)
+    // Tanpa cap → 100 request seketika (5 chunk paralel penuh). Worker pool
+    // 4 chunk in-flight → mentok di 4 × 20 = 80: masih paralel (>20), tapi
+    // ter-capung oleh cap (<100).
+    expect(maxInFlight).toBe(80)
   })
 
   it('receipt gagal → di-skip graceful, batch tetap resolve tanpa throw', async () => {

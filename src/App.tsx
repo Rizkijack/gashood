@@ -11,6 +11,8 @@ import { GasTable } from "@/ui/GasTable";
 import { TxFeed } from "@/ui/TxFeed";
 import { Legend } from "@/ui/Legend";
 import { DetailPanel } from "@/ui/DetailPanel";
+import { ErrorToast } from "@/ui/ErrorToast";
+import { LoadingScreen } from "@/ui/LoadingScreen";
 
 // ─── WebGL Support Check ─────────────────────────────────────────────
 function isWebGLAvailable(): boolean {
@@ -80,20 +82,6 @@ const styles: Record<string, React.CSSProperties> = {
     zIndex: 12,
     pointerEvents: "none",
     whiteSpace: "nowrap" as const,
-  },
-  errorToast: {
-    position: "absolute",
-    top: 64,
-    left: "50%",
-    transform: "translateX(-50%)",
-    background: "rgba(239,68,68,0.92)",
-    color: "#fff",
-    padding: "8px 16px",
-    borderRadius: 8,
-    fontSize: 12,
-    zIndex: 40,
-    maxWidth: "90vw",
-    textAlign: "center" as const,
   },
   toggleBtn: {
     position: "absolute",
@@ -262,7 +250,6 @@ function AnalyticsPanel({ viewport, open, onClose }: { viewport: Viewport; open:
 // ─── Overlay layers (Fase 4) ─────────────────────────────────────────
 function OverlayLayers() {
   const viewport = useViewport();
-  const error = useGasStore((s) => s.error);
   // Desktop/tablet: panel visible by default. Mobile: hidden behind toggle (4.6).
   const [panelOpen, setPanelOpen] = useState<boolean>(() =>
     typeof window === "undefined" ? true : window.innerWidth >= 768,
@@ -294,8 +281,6 @@ function OverlayLayers() {
       )}
 
       <DetailPanel />
-
-      {error && <div style={styles.errorToast}>{error}</div>}
     </>
   );
 }
@@ -401,10 +386,14 @@ export default function App() {
           <Suspense fallback={<Loader />}>
             <Canvas
               camera={{ position: [15, 12, 15], fov: 50 }}
-              dpr={[1, 2]}
+              // GPU churn fix: cap 1.5 (dari 2) — dpr tinggi melipatgandakan
+              // fill-rate untuk canvas + composer; 1.5 masih tajam di layar umum.
+              dpr={[1, 1.5]}
               shadows
               style={{ width: "100%", height: "100%", display: "block" }}
-              gl={{ antialias: true, powerPreference: "high-performance" }}
+              // antialias off: EffectComposer (World.tsx) merender ke render target
+              // dan menggambar full-screen quad — MSAA canvas asli jadi redundan.
+              gl={{ antialias: false, powerPreference: "high-performance" }}
               onCreated={({ gl }) => {
                 gl.setClearColor("#0a0a0f");
               }}
@@ -420,6 +409,8 @@ export default function App() {
       </div>
 
       <OverlayLayers />
+      <ErrorToast />
+      <LoadingScreen />
     </div>
   );
 }

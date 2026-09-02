@@ -11,24 +11,50 @@ const SKY_STATES = [
   { utilization: 1.0,  top: new THREE.Color('#1a0a0a'), bottom: new THREE.Color('#881111') },
 ]
 
-function lerpColor(a: THREE.Color, b: THREE.Color, t: number): THREE.Color {
-  return new THREE.Color().copy(a).lerp(b, t)
-}
+/**
+ * L20 — Keputusan sumber utilization (dokumentasi keputusan):
+ *
+ * Utilization = avgBlockGas / BLOCK_GAS_LIMIT, clamp 0..1.
+ *
+ * Dipilih rasio blok (bukan TPS ternormalisasi) karena:
+ * 1. `totalTransactions` bersifat kumulatif-monotonik — pemakaian lama
+ *    (`totalTransactions / 5000`) membuat langit terkunci di PEAK selamanya
+ *    setelah ~5000 tx; bug yang diperbaiki di sini.
+ * 2. TPS dinilai kurang tepat setelah membaca store: `blockTime` Robinhood
+ *    Chain = 100 ms (config/chain.ts), sehingga tps = jumlah tx per batch × 10
+ *    dan normalisasi TPS butuh konstanta max-TPS karangan.
+ * 3. `avgBlockGas` dari store adalah rata-rata gasUsed per tx pada batch poll
+ *    terbaru (bukan total gas blok — total blok tidak tersedia di store), jadi
+ *    rasio ini adalah proksi beban blok terkini: batch yang berat (avg gas
+ *    tinggi, mis. banyak contract call) mendorong utilization naik, dan nilai
+ *    reset setiap poll — selalu mencerminkan kondisi SEKARANG.
+ *
+ * Catatan rentang: dengan gas per tx tipikal (21k–500k), utilization berada di
+ * ~0.06–1.5% (LOW). Preset threshold 5/20/50% tetap dipertahankan — langit
+ * bergerak ke MEDIUM/HIGH hanya saat blok benar-benar berat, sesuai semantik
+ * "rasio terhadap gas limit blok".
+ */
+const BLOCK_GAS_LIMIT = 32_500_000 // Arbitrum Nitro block gas limit
 
-function getSkyColors(utilization: number): { top: THREE.Color; bottom: THREE.Color } {
+// L6 (GC): scratch Color pre-alloc — lerp per frame tanpa alokasi Color baru.
+const scratchTop = new THREE.Color()
+const scratchBottom = new THREE.Color()
+
+/** Tulis hasil lerp preset ke out-param (tidak mengalokasikan Color baru). */
+function getSkyColors(utilization: number, outTop: THREE.Color, outBottom: THREE.Color): void {
   for (let i = 0; i < SKY_STATES.length - 1; i++) {
     const curr = SKY_STATES[i]
     const next = SKY_STATES[i + 1]
     if (utilization >= curr.utilization && utilization <= next.utilization) {
       const t = (utilization - curr.utilization) / (next.utilization - curr.utilization)
-      return {
-        top: lerpColor(curr.top, next.top, t),
-        bottom: lerpColor(curr.bottom, next.bottom, t),
-      }
+      outTop.copy(curr.top).lerp(next.top, t)
+      outBottom.copy(curr.bottom).lerp(next.bottom, t)
+      return
     }
   }
   const last = SKY_STATES[SKY_STATES.length - 1]
-  return { top: last.top.clone(), bottom: last.bottom.clone() }
+  outTop.copy(last.top)
+  outBottom.copy(last.bottom)
 }
 
 const vertexShader = `
@@ -74,11 +100,13 @@ export function SkyDome() {
   useFrame(() => {
     if (!matRef.current) return
 
-    const utilization = Math.min(networkStats.totalTransactions / 5000, 1)
-    const { top, bottom } = getSkyColors(utilization)
+    // L20: utilization dari rasio blok terkini, clamp 0..1 (lihat komentar
+    // BLOCK_GAS_LIMIT) — bukan totalTransactions yang kumulatif-monotonik.
+    const utilization = Math.min(Math.max(networkStats.avgBlockGas / BLOCK_GAS_LIMIT, 0), 1)
+    getSkyColors(utilization, scratchTop, scratchBottom)
 
-    currentTop.current.lerp(top, 0.02)
-    currentBottom.current.lerp(bottom, 0.02)
+    currentTop.current.lerp(scratchTop, 0.02)
+    currentBottom.current.lerp(scratchBottom, 0.02)
 
     matRef.current.uniforms.uTopColor.value.copy(currentTop.current)
     matRef.current.uniforms.uBottomColor.value.copy(currentBottom.current)

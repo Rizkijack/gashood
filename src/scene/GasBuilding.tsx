@@ -1,5 +1,7 @@
 import { Billboard, Text } from "@react-three/drei";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { useFrame } from "@react-three/fiber";
+import * as THREE from "three";
 import { TxType } from "@/data/tx-classifier";
 import { useGasStore } from "@/store/gas-store";
 
@@ -58,8 +60,73 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
   const isStoreHovered = hoveredType === txType;
   const activeHover = isHovered || isStoreHovered;
 
-  const displayScale: [number, number, number] =
-    isSelected || activeHover ? [1.05, 1.05, 1.05] : [1, 1, 1];
+  // ---- L17 + L21: satu useFrame yang menggabungkan lerp & pulse ----
+  const meshRef = useRef<THREE.Mesh>(null);
+  const matRef = useRef<THREE.MeshStandardMaterial>(null);
+  const outlineRef = useRef<THREE.Mesh>(null);
+
+  // L17: state animasi per bangunan (tanpa alokasi per frame)
+  const currentHeightRef = useRef<number | null>(null); // null = snap frame pertama
+  const currentColorRef = useRef(new THREE.Color(baseColor));
+  const targetColorRef = useRef(new THREE.Color(baseColor));
+  const lastBaseColorRef = useRef(baseColor);
+
+  // L21: state pulse
+  const pulseRef = useRef(0);
+  const prevTxCountRef = useRef(0);
+
+  useFrame(() => {
+    const mesh = meshRef.current;
+    const mat = matRef.current;
+    if (!mesh || !mat) return;
+
+    // (a) L17 — lerp tinggi (faktor 0.05) & posisi y = height/2 agar
+    // bangunan tumbuh dari lantai.
+    if (currentHeightRef.current === null) currentHeightRef.current = height;
+    currentHeightRef.current = THREE.MathUtils.lerp(currentHeightRef.current, height, 0.05);
+    const currentHeight = currentHeightRef.current;
+
+    // (a) L17 — lerp warna (faktor 0.03), tanpa alokasi. Target hanya
+    // di-parse saat baseColor berubah (re-render oleh store), bukan per frame.
+    if (lastBaseColorRef.current !== baseColor) {
+      targetColorRef.current.set(baseColor);
+      lastBaseColorRef.current = baseColor;
+    }
+    currentColorRef.current.lerp(targetColorRef.current, 0.03);
+    mat.color.copy(currentColorRef.current);
+    mat.emissive.copy(currentColorRef.current);
+
+    // (b) L21 — pulse: recentTxCount naik -> pulse = 1, decay x0.95/frame.
+    if (recentTxCount > prevTxCountRef.current) pulseRef.current = 1;
+    prevTxCountRef.current = recentTxCount;
+    pulseRef.current *= 0.95;
+    const pulse = pulseRef.current;
+
+    // Hover/selected dipertahankan: boost 1.05 digabungkan ke skala
+    // (setara displayScale lama [1.05, 1.05, 1.05] pada mesh berskala data).
+    const hoverBoost = activeHover || isSelected ? 1.05 : 1;
+
+    // L21: pulse ke scale.x/z — baseWidth x (1 + pulse x 0.05).
+    mesh.scale.set(
+      width * (1 + pulse * 0.05) * hoverBoost,
+      currentHeight * hoverBoost,
+      width * (1 + pulse * 0.05) * hoverBoost
+    );
+    mesh.position.y = currentHeight / 2;
+
+    // L21: pulse ke emissiveIntensity (+pulse x 0.5), perilaku hover/selected
+    // lama (x1.8) dipertahankan dan digabungkan, tidak saling menimpa.
+    mat.emissiveIntensity =
+      emissiveIntensity * (activeHover || isSelected ? 1.8 : 1) + pulse * 0.5;
+
+    // Outline wireframe mengikuti skala bangunan yang dianimasikan
+    // (setara skala lama [1.08, 1.02, 1.08] di atas ukuran data).
+    const outline = outlineRef.current;
+    if (outline) {
+      outline.scale.set(width * 1.08, currentHeight * 1.02, width * 1.08);
+      outline.position.y = currentHeight / 2;
+    }
+  });
 
   const handlePointerOver = (e: { stopPropagation: () => void }) => {
     e.stopPropagation();
@@ -88,21 +155,26 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
 
   return (
     <group position={position}>
-      {/* Building mesh, anchored at ground: y = height/2 */}
+      {/*
+        F-4: SATU unit boxGeometry (1,1,1) statis — nol BufferGeometry dibuat
+        ulang per poll. Ukuran data (width/height) lewat scale, dianimasikan
+        useFrame di atas. position/scale JSX = nilai awal (target); useFrame
+        mengambil alih setiap frame.
+      */}
       <mesh
+        ref={meshRef}
         position={[0, height / 2, 0]}
-        scale={displayScale}
+        scale={[width, height, width]}
         castShadow
         receiveShadow
         onPointerOver={handlePointerOver}
         onPointerOut={handlePointerOut}
         onClick={handleClick}
       >
-        <boxGeometry args={[width, height, width]} />
+        <boxGeometry args={[1, 1, 1]} />
+        {/* color/emissive/emissiveIntensity dimiliki useFrame (lerp + pulse) */}
         <meshStandardMaterial
-          color={baseColor}
-          emissive={baseColor}
-          emissiveIntensity={activeHover || isSelected ? emissiveIntensity * 1.8 : emissiveIntensity}
+          ref={matRef}
           metalness={0.2}
           roughness={0.5}
           transparent={avgGasUsed === 0}
@@ -110,10 +182,15 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
         />
       </mesh>
 
-      {/* Selected outline effect via secondary wireframe box */}
+      {/* Selected outline effect via secondary wireframe box — unit geometry
+          + scale (F-4), mengikuti animasi useFrame. */}
       {isSelected && (
-        <mesh position={[0, height / 2, 0]} scale={[1.08, 1.02, 1.08]}>
-          <boxGeometry args={[width, height, width]} />
+        <mesh
+          ref={outlineRef}
+          position={[0, height / 2, 0]}
+          scale={[width * 1.08, height * 1.02, width * 1.08]}
+        >
+          <boxGeometry args={[1, 1, 1]} />
           <meshBasicMaterial color={baseColor} wireframe transparent opacity={0.35} />
         </mesh>
       )}

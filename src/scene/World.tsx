@@ -1,4 +1,5 @@
 import { type ReactNode, Component, Suspense } from 'react'
+import { useThree } from '@react-three/fiber'
 import { Environment } from '@react-three/drei'
 import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing'
 import { GasParticles } from './GasParticles'
@@ -19,6 +20,17 @@ interface WorldProps {
   children?: ReactNode
 }
 
+/**
+ * L28 (responsive): DataRiver disembunyikan di viewport < 768px demi performa —
+ * shader full-width + fragment cost-nya terlalu berat untuk GPU mobile.
+ * Ukuran dibaca dari useThree agar reaktif terhadap resize/orientasi.
+ */
+function ResponsiveDataRiver() {
+  const width = useThree((state) => state.size.width)
+  if (width < 768) return null
+  return <DataRiver />
+}
+
 export function World({ children }: WorldProps) {
   return (
     <>
@@ -29,7 +41,9 @@ export function World({ children }: WorldProps) {
         intensity={0.8}
         position={[10, 15, 5]}
         castShadow
-        shadow-mapSize={[2048, 2048]}
+        // GPU churn fix: 2048 → 1024. Kejelasan shadow kota masih memadai
+        // pada skala scene 40x40, biaya fill-rate turun ~4x.
+        shadow-mapSize={[1024, 1024]}
         shadow-camera-near={0.5}
         shadow-camera-far={50}
         shadow-camera-left={-20}
@@ -55,10 +69,11 @@ export function World({ children }: WorldProps) {
       {children}
 
       <GasParticles />
-      <DataRiver />
+      <ResponsiveDataRiver />
       <SkyDome />
 
-      <EffectComposer>
+      {/* multisampling 2 (default 8x terlalu berat untuk mid-range @ dpr tinggi) */}
+      <EffectComposer multisampling={2}>
         <Bloom
           luminanceThreshold={0.8}
           luminanceSmoothing={0.9}

@@ -34,6 +34,8 @@ export interface GasStore {
   timeRange: TimeRange
   isCollecting: boolean
   error: string | null
+  /** Kegagalan polling beruntun (increment saat cycle gagal, reset saat sukses). */
+  consecutiveFailures: number
 
   updateMetrics: (txs: ClassifiedTransaction[], blockNumber: number, currentGasPriceWei?: bigint) => void
   /** Alias sesuai penamaan dokumen (BUILD_STEPS.md Langkah 9) — logika sama dengan updateMetrics. */
@@ -44,6 +46,7 @@ export interface GasStore {
   setTimeRange: (range: TimeRange) => void
   setCollecting: (collecting: boolean) => void
   setError: (error: string | null) => void
+  setConsecutiveFailures: (count: number) => void
   clearRecentTxs: () => void
 }
 
@@ -94,6 +97,7 @@ export const useGasStore = create<GasStore>((set, get) => ({
   timeRange: '5m',
   isCollecting: false,
   error: null,
+  consecutiveFailures: 0,
 
   updateMetrics: (txs, blockNumber, currentGasPriceWei) => {
     const { gasMetrics, recentTxs } = get()
@@ -183,5 +187,6 @@ export const useGasStore = create<GasStore>((set, get) => ({
   setTimeRange: (range) => set({ timeRange: range }),
   setCollecting: (collecting) => set({ isCollecting: collecting }),
   setError: (error) => set({ error }),
+  setConsecutiveFailures: (count) => set({ consecutiveFailures: count }),
   clearRecentTxs: () => set({ recentTxs: [] }),
 }))

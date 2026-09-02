@@ -3,6 +3,12 @@ import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useGasStore } from '@/store/gas-store'
 
+/** L10 (security/robustness): nilai uniform harus finite — data upstream
+ * (RPC/store) bisa berupa NaN/Infinity dan meracuni shader. */
+function safe(value: number, fallback: number): number {
+  return Number.isFinite(value) ? value : fallback
+}
+
 const vertexShader = `
   varying vec2 vUv;
   void main() {
@@ -13,7 +19,7 @@ const vertexShader = `
 
 const fragmentShader = `
   uniform float uTime;
-  uniform float uSpeed;
+  uniform float uOffset;
   uniform vec3 uColor;
   uniform float uIntensity;
   varying vec2 vUv;
@@ -50,10 +56,14 @@ const fragmentShader = `
 
   void main() {
     vec2 uv = vUv;
-    uv.x += uTime * uSpeed * 0.3;
+    // L19: scrolling memakai uOffset yang terintegrasi di CPU (useFrame),
+    // bukan uTime * uSpeed — perubahan kecepatan tidak lagi menggeser
+    // pola secara retroaktif (phase-jump). uTime tetap dipakai untuk
+    // evolusi noise, bukan scrolling.
+    uv.x += uOffset;
 
-    float n1 = snoise(uv * 3.0) * 0.5 + 0.5;
-    float n2 = snoise(uv * 6.0 + 100.0) * 0.5 + 0.5;
+    float n1 = snoise(uv * 3.0 + uTime * 0.05) * 0.5 + 0.5;
+    float n2 = snoise(uv * 6.0 + 100.0 + uTime * 0.05) * 0.5 + 0.5;
     float noise = n1 * 0.7 + n2 * 0.3;
 
     float glow = smoothstep(0.2, 0.8, noise) * uIntensity;
@@ -70,34 +80,49 @@ const fragmentShader = `
 export function DataRiver() {
   const matRef = useRef<THREE.ShaderMaterial>(null)
   const networkStats = useGasStore((s) => s.networkStats)
-  const gasMetrics = useGasStore((s) => s.gasMetrics)
+
+  // L19: offset diintegrasikan di CPU — kecepatan berubah TIDAK melompatkan
+  // pola karena offset terakumulasi secara kontinu (delta dari clock).
+  const offsetRef = useRef(0)
+
+  // L8 (GC): totalTxs dihitung di selector zustand — hanya recompute saat
+  // state store berubah (~tiap polling), BUKAN tiap frame, dan tanpa
+  // alokasi `Array.from(gasMetrics.values())` per frame.
+  const totalTxs = useGasStore((s) => {
+    let sum = 0
+    for (const m of s.gasMetrics.values()) sum += m.recentTxCount
+    return sum
+  })
 
   const uniforms = useMemo(
     () => ({
       uTime: { value: 0 },
-      uSpeed: { value: 1.0 },
+      uOffset: { value: 0 },
       uColor: { value: new THREE.Color('#44CC66') },
       uIntensity: { value: 0.5 },
     }),
     []
   )
 
-  useFrame((state) => {
+  useFrame((state, delta) => {
     if (!matRef.current) return
 
-    const tps = networkStats.tps
-    const avgGasPrice = networkStats.currentGasPrice
+    const tps = safe(networkStats.tps, 0)
+    const avgGasPrice = safe(networkStats.currentGasPrice, 0)
+    const total = safe(totalTxs, 0)
 
-    matRef.current.uniforms.uTime.value = state.clock.elapsedTime
-    matRef.current.uniforms.uSpeed.value = Math.min(tps / 10, 3) + 0.5
+    // L19: integrasi offset di CPU (delta dari clock frame ini).
+    const speed = safe(Math.min(tps / 10, 3) + 0.5, 0.5)
+    offsetRef.current += speed * delta
+
+    matRef.current.uniforms.uTime.value = safe(state.clock.elapsedTime, 0)
+    matRef.current.uniforms.uOffset.value = safe(offsetRef.current, 0)
 
     const r = Math.min(avgGasPrice / 0.5, 1)
     const g = 1 - Math.min(avgGasPrice / 0.5, 1) * 0.5
-    const b = 0.3
-    matRef.current.uniforms.uColor.value.setRGB(r * 0.8 + 0.2, g * 0.8 + 0.1, b)
+    matRef.current.uniforms.uColor.value.setRGB(r * 0.8 + 0.2, g * 0.8 + 0.1, 0.3)
 
-    const totalTxs = Array.from(gasMetrics.values()).reduce((s, m) => s + m.recentTxCount, 0)
-    matRef.current.uniforms.uIntensity.value = Math.min(totalTxs / 100, 1) * 0.8 + 0.2
+    matRef.current.uniforms.uIntensity.value = Math.min(total / 100, 1) * 0.8 + 0.2
   })
 
   return (
