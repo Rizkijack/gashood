@@ -2,7 +2,7 @@
 
 > 3D Virtual Gas Fee Tracker untuk Robinhood Chain L2 Mainnet
 
-![Status](https://img.shields.io/badge/status-active-brightgreen)
+![Status](https://img.shields.io/badge/status-in%20development-yellow)
 ![Chain](https://img.shields.io/badge/chain-Robinhood%20L2-purple)
 ![Chain ID](https://img.shields.io/badge/chain%20ID-4663-blue)
 ![Build](https://img.shields.io/badge/build-passing-brightgreen)
@@ -10,6 +10,31 @@
 GasHood memvisualisasikan gas fee real-time dari **semua tipe transaksi** di [Robinhood Chain](https://robinhood.com/chain) (Arbitrum Nitro L2, Chain ID 4663) dalam bentuk **kota 3D virtual interaktif**.
 
 Setiap tipe transaksi direpresentasikan sebagai **bangunan** yang tinggi, warna, dan intensitasnya berubah secara dinamis mengikuti data gas fee aktual. Partikel beterbangan dari bangunan saat transaksi baru masuk, sungai data mengalir di tengah kota, dan langit berubah warna sesuai kondisi jaringan.
+
+---
+
+## ✅ Status Implementasi
+
+| Fase | Status |
+|---|---|
+| Fase 1 — Foundation (config, RPC, Blockscout, classifier, collector, store) | ✅ Selesai |
+| Fase 2 — 3D World Basic (World, GasCity, GasBuilding, CameraController) | ✅ Selesai |
+| Fase 3 — Real-time Data Flow (animasi, partikel, river, sky) | ✅ Selesai (lerp halus & profiling manual masih ditunda) |
+| Fase 4 — UI Overlay (dashboard, tabel, feed, legend, interaksi, responsif) | ✅ Selesai |
+| Fase 5 — Polish (PostFX bloom+vignette, loading screen, error UI, docs) | ✅ Selesai |
+| Fase 5 — Deploy ke Vercel | ⏳ Menunggu user (butuh akses dashboard/env vars) |
+
+**Test: 66 passing** via [Vitest](https://vitest.dev) — unit + integration untuk RPC client, classifier, collector, store, dan utils.
+
+```bash
+# Jalankan test (Bun)
+bun test
+
+# atau dengan npm
+npm run test
+```
+
+Catatan: sound design (5.4) dan SSAO sengaja ditunda — opsional, tidak menghalangi rilis.
 
 ---
 
@@ -109,6 +134,8 @@ src/
 │   ├── GasTable.tsx          # Sortable table (12 rows, hover/click sync with 3D)
 │   ├── TxFeed.tsx            # Live transaction feed (scrollable, max 50)
 │   ├── Legend.tsx             # Color scale + type dots (collapsible)
+│   ├── LoadingScreen.tsx      # Loading saat aset 3D dimuat / menunggu data pertama (give-up 15s)
+│   ├── ErrorToast.tsx         # Error RPC → toast generik + dismiss (tidak bocorkan detail internal)
 │   ├── DetailPanel.tsx       # Slide-in panel (min/avg/max gas, recent txs)
 │   └── tx-theme.ts           # Shared colors, labels, gas brackets
 ├── utils/

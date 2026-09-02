@@ -20,6 +20,18 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: "center" as const,
     boxShadow: "0 6px 18px rgba(0,0,0,0.4)",
   },
+  dismiss: {
+    background: "rgba(255,255,255,0.15)",
+    border: "none",
+    color: "#fff",
+    width: 22,
+    height: 22,
+    borderRadius: 999,
+    cursor: "pointer",
+    fontSize: 11,
+    lineHeight: 1,
+    flexShrink: 0,
+  },
 };
 
 /** L31: setelah 3 kegagalan → pesan berubah jadi "menggunakan data cache". */
@@ -61,6 +73,14 @@ export function ErrorToast() {
         {message}
         {failures > 1 ? ` (percobaan ke-${failures})` : ""}
       </span>
+      <button
+        style={styles.dismiss}
+        onClick={() => useGasStore.getState().setError(null)}
+        aria-label="Tutup notifikasi error"
+        title="Dismiss"
+      >
+        ✕
+      </button>
     </div>
   );
 }

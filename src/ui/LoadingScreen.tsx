@@ -101,10 +101,10 @@ export function LoadingScreen() {
       <div style={styles.logo}>⛽</div>
       <div style={styles.title}>GasHood</div>
       <div style={styles.status}>Connecting to Robinhood Chain...</div>
-      <div style={styles.track}>
+      <div style={styles.track} aria-hidden="true">
         <div style={{ ...styles.bar, width: `${pct}%` }} />
       </div>
-      <div style={styles.pct}>{pct}%</div>
+      <div style={styles.pct} aria-hidden="true">{pct}%</div>
     </div>
   );
 }
