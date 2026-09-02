@@ -1,17 +1,23 @@
-export enum TxType {
-  NATIVE_TRANSFER = "native_transfer",
-  ERC20_TRANSFER = "erc20_transfer",
-  ERC20_APPROVE = "erc20_approve",
-  DEX_SWAP = "dex_swap",
-  LIQUIDITY = "liquidity",
-  BRIDGE_DEPOSIT = "bridge_deposit",
-  BRIDGE_WITHDRAW = "bridge_withdraw",
-  NFT_TRANSFER = "nft_transfer",
-  NFT_MINT = "nft_mint",
-  CONTRACT_DEPLOY = "contract_deploy",
-  CONTRACT_CALL = "contract_call",
-  RWA_TOKEN = "rwa_token",
-}
+/**
+ * 12 tipe transaksi. Const-object pattern (bukan `enum` TS) agar kompatibel
+ * dengan `erasableSyntaxOnly` di tsconfig (TS 6).
+ */
+export const TxType = {
+  NATIVE_TRANSFER: 'native_transfer',
+  ERC20_TRANSFER: 'erc20_transfer',
+  ERC20_APPROVE: 'erc20_approve',
+  DEX_SWAP: 'dex_swap',
+  LIQUIDITY: 'liquidity',
+  BRIDGE_DEPOSIT: 'bridge_deposit',
+  BRIDGE_WITHDRAW: 'bridge_withdraw',
+  NFT_TRANSFER: 'nft_transfer',
+  NFT_MINT: 'nft_mint',
+  CONTRACT_DEPLOY: 'contract_deploy',
+  CONTRACT_CALL: 'contract_call',
+  RWA_TOKEN: 'rwa_token',
+} as const
+
+export type TxType = (typeof TxType)[keyof typeof TxType]
 
 export const METHOD_SIGNATURES: Record<string, TxType> = {
   // ERC-20
@@ -70,10 +76,7 @@ function extractSelector(data: string): string | null {
   return data.slice(0, 10).toLowerCase()
 }
 
-function isNftTransfer(tx: TransactionData, selector: string): boolean {
-  if (selector === '0x23b872dd') {
-    return false
-  }
+function isNftTransfer(selector: string): boolean {
   return selector === '0x42842e0e' || selector === '0xf242432a'
 }
 
@@ -91,11 +94,7 @@ export function classifyTransaction(tx: TransactionData): TxType {
   if (selector && METHOD_SIGNATURES[selector]) {
     const txType = METHOD_SIGNATURES[selector]
 
-    if (selector === '0x23b872dd') {
-      return isNftTransfer(tx, selector) ? TxType.NFT_TRANSFER : TxType.ERC20_TRANSFER
-    }
-
-    if (isNftTransfer(tx, selector)) {
+    if (isNftTransfer(selector)) {
       return TxType.NFT_TRANSFER
     }
 

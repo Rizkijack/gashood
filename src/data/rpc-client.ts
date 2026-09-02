@@ -28,7 +28,7 @@ export function getRpcClient(): PublicClient {
   return client
 }
 
-export async function getLatestBlock(): Promise<Block> {
+export async function getLatestBlock(): Promise<Block<bigint, true>> {
   const client = getRpcClient()
   return client.getBlock({ includeTransactions: true })
 }

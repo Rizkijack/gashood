@@ -1,4 +1,4 @@
-import { getLatestBlock, batchGetReceipts, getGasPrice } from '@/data/rpc-client'
+import { getLatestBlock, batchGetReceipts } from '@/data/rpc-client'
 import { classifyTransaction, type ClassifiedTransaction, type TransactionData } from '@/data/tx-classifier'
 import { useGasStore } from '@/store/gas-store'
 import { calculateTotalFee } from '@/utils/gas-math'
