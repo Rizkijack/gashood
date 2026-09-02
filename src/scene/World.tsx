@@ -5,6 +5,7 @@ import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing'
 import { GasParticles } from './GasParticles'
 import { DataRiver } from './DataRiver'
 import { SkyDome } from './SkyDome'
+import { Vegetation } from './Vegetation'
 
 class EnvironmentBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false }
@@ -19,6 +20,27 @@ class EnvironmentBoundary extends Component<{ children: ReactNode }, { failed: b
 interface WorldProps {
   children?: ReactNode
 }
+
+/* ---- TANAH (AC rekonstruksi, ≤8 draw calls) -------------------------------
+ * Detail statis dihitung sekali di module scope — bukan per render.
+ * gridHelper dihapus — diganti plaza + sidewalk + jalan yang nyata. */
+
+// Sidewalk: 4 strip 0.5 tebal mengelilingi plaza 26×26 (x/z ±13 → ±13.5).
+// Strip X & Z saling overlap di 4 pojok — diberi y berbeda (0.004/0.005)
+// agar tidak z-fight di area pojok.
+const SIDEWALK_STRIPS: { x: number; z: number; y: number; size: [number, number] }[] = [
+  { x: 0, z: 13.25, y: 0.004, size: [27, 0.5] },
+  { x: 0, z: -13.25, y: 0.004, size: [27, 0.5] },
+  { x: 13.25, z: 0, y: 0.005, size: [0.5, 27] },
+  { x: -13.25, z: 0, y: 0.005, size: [0.5, 27] },
+];
+
+// Jalan tipis: 1 strip sejajar sumbu X di z=-2 (koridor antara baris z=-4
+// dan z=0). Koridor z=2 dipakai sungai DataRiver — road tidak boleh
+// bertindihan dengan air/bank (sungai z ∈ [1.09, 2.91]).
+const ROAD_STRIPS: { z: number; size: [number, number] }[] = [
+  { z: -2, size: [26, 0.4] },
+];
 
 /**
  * L28 (responsive): DataRiver disembunyikan di viewport < 768px demi performa —
@@ -54,11 +76,53 @@ export function World({ children }: WorldProps) {
       <pointLight position={[-8, 5, -8]} intensity={0.3} color="#4488ff" />
       <pointLight position={[8, 5, 8]} intensity={0.2} color="#ff8844" />
 
+      {/*
+        TANAH rekonstruksi (≤8 draw calls):
+        1. Base 40×40 rumput hijau gelap (area di luar kota)
+        2. Plaza aspal 26×26 di tengah (grid bangunan ±8)
+        3. Sidewalk ring — 4 strip 0.5 mengelilingi plaza
+        4. 1 strip jalan tipis di koridor z=-2 (koridor z=2 milik sungai)
+        Semua lapisan receiveShadow; gridHelper dihapus (diganti detail nyata).
+      */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[40, 40]} />
-        <meshStandardMaterial color="#0a0a0f" roughness={0.8} metalness={0.1} />
+        <meshStandardMaterial color="#1a2418" roughness={1} metalness={0} />
       </mesh>
-      <gridHelper args={[40, 40, '#1a1a2e', '#111122']} position={[0, 0.01, 0]} />
+
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.005, 0]} receiveShadow>
+        <planeGeometry args={[26, 26]} />
+        <meshStandardMaterial color="#1b1d23" roughness={0.95} metalness={0} />
+      </mesh>
+
+      {/* Sidewalk ring — 4 strip tipis (draw call 3–6); y 0.004/0.005
+          alternate agar pojok yang overlap tidak z-fight */}
+      {SIDEWALK_STRIPS.map((s) => (
+        <mesh
+          key={`sidewalk-${s.x}-${s.z}`}
+          rotation={[-Math.PI / 2, 0, 0]}
+          position={[s.x, s.y, s.z]}
+          receiveShadow
+        >
+          <planeGeometry args={s.size} />
+          <meshStandardMaterial color="#2a2c33" roughness={0.9} metalness={0} />
+        </mesh>
+      ))}
+
+      {/* Jalan tipis — 1 strip sejajar x (draw call 7) */}
+      {ROAD_STRIPS.map((r) => (
+        <mesh
+          key={`road-${r.z}`}
+          rotation={[-Math.PI / 2, 0, 0]}
+          position={[0, 0.008, r.z]}
+          receiveShadow
+        >
+          <planeGeometry args={r.size} />
+          <meshStandardMaterial color="#23262d" roughness={0.85} metalness={0} />
+        </mesh>
+      ))}
+
+      {/* Vegetasi statis: rumput + pohon perimeter — InstancedMesh, 4 draw calls */}
+      <Vegetation />
 
       <EnvironmentBoundary>
         <Suspense fallback={null}>

@@ -56,22 +56,34 @@ const fragmentShader = `
 
   void main() {
     vec2 uv = vUv;
-    // L19: scrolling memakai uOffset yang terintegrasi di CPU (useFrame),
-    // bukan uTime * uSpeed — perubahan kecepatan tidak lagi menggeser
-    // pola secara retroaktif (phase-jump). uTime tetap dipakai untuk
-    // evolusi noise, bukan scrolling.
+    // L19 (kontrak dipertahankan): scrolling pakai uOffset terintegrasi di CPU
+    // (useFrame), bukan uTime * uSpeed — perubahan kecepatan tidak menggeser
+    // pola secara retroaktif. uTime tetap untuk evolusi noise.
     uv.x += uOffset;
 
     float n1 = snoise(uv * 3.0 + uTime * 0.05) * 0.5 + 0.5;
     float n2 = snoise(uv * 6.0 + 100.0 + uTime * 0.05) * 0.5 + 0.5;
     float noise = n1 * 0.7 + n2 * 0.3;
 
-    float glow = smoothstep(0.2, 0.8, noise) * uIntensity;
-
     float edgeFade = smoothstep(0.0, 0.15, vUv.y) * smoothstep(1.0, 0.85, vUv.y);
 
-    vec3 finalColor = uColor * (glow + 0.1);
-    float alpha = glow * edgeFade * 0.7;
+    // Gelombang halus: displacement kecil di fragment lewat modulasi noise
+    // (bukan vertex) — tetap murah.
+    float wave = n1 * 0.05;
+
+    // Kilau/spekular air: highlight pada noise bernilai tinggi + shimmer halus
+    // (AC: solid, bukan neon — dibatasi uIntensity & di-clamp).
+    float specular = smoothstep(0.55, 0.9, noise) * uIntensity * 0.4;
+    float shimmer = sin(uv.x * 40.0 + uTime * 2.0) * 0.02;
+
+    // Warna air dari gas price (r,g) — BUKAN full additive: dipakai sebagai
+    // warna dasar + bias kebiruan agar terlihat seperti air.
+    vec3 base = uColor * 0.55 + vec3(0.02, 0.05, 0.12);
+
+    vec3 finalColor = min(base + vec3(specular + shimmer + wave), vec3(1.0));
+
+    // Alpha ~0.85 → riverbed di bawahnya ikut terlihat (kesan "dalam").
+    float alpha = 0.85 * edgeFade;
 
     gl_FragColor = vec4(finalColor, alpha);
   }
@@ -104,6 +116,8 @@ export function DataRiver() {
     []
   )
 
+  // Kontrak useFrame dipertahankan: hanya update uniform uTime/uOffset/
+  // uColor/uIntensity — TIDAK menyentuh store baru, tanpa alokasi per frame.
   useFrame((state, delta) => {
     if (!matRef.current) return
 
@@ -126,17 +140,54 @@ export function DataRiver() {
   })
 
   return (
-    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]}>
-      <planeGeometry args={[36, 2.5]} />
-      <shaderMaterial
-        ref={matRef}
-        vertexShader={vertexShader}
-        fragmentShader={fragmentShader}
-        uniforms={uniforms}
-        transparent
-        depthWrite={false}
-        blending={THREE.AdditiveBlending}
-      />
-    </mesh>
+    <group>
+      {/*
+        SUNGAI 3 lapis (AC rekonstruksi): dasar riverbed gelap → tepian kiri/
+        kanan → permukaan air transparan di atasnya. Semua geometry dibuat
+        sekali; kontrak tambahan: sungai utama di z=2 (koridor antara baris
+        bangunan z=0 dan z=4 — "sungai data mengalir di tengah kota").
+
+        Geometri presisi (clearance ≥ 0.15):
+        - radius efektif plinth max = (2.0/2) × 1.05(pulse) × 1.05(hover)
+          × 1.05(plinth) = 1.1576 ≈ 1.158 → koridor bebas z ∈ [1.158, 2.842].
+        - safety 0.15 → AIR z ∈ [1.31, 2.69], lebar 1.38 (clearance 0.152).
+        - BANK tipis 0.22 mengapit: z ∈ [1.09, 1.31] & [2.69, 2.91].
+        - RIVERBED sedikit lebih lebar dari air: z ∈ [1.10, 2.90] (lebar 1.8).
+        - Y: riverbed 0.01 / air 0.06 / bank box 0–0.15 (center 0.075).
+        Panjang plane tetap 36 (membentang x ∈ [-18, 18]).
+      */}
+
+      {/* Dasar sungai — gelap kebiruan, kasar; terlihat lewat air alpha 0.85 */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 2]} receiveShadow>
+        <planeGeometry args={[36, 1.8]} />
+        <meshStandardMaterial color="#0d1b26" roughness={0.9} metalness={0.15} />
+      </mesh>
+
+      {/* Tepian (bank) kiri & kanan — warna tanah/kerikil, sungai terkurung.
+          Tipis 0.22, tinggi 0.15 (0–0.15 dari lantai). */}
+      <mesh position={[0, 0.075, 1.2]}>
+        <boxGeometry args={[36, 0.15, 0.22]} />
+        <meshStandardMaterial color="#3a3a3f" roughness={1} metalness={0} />
+      </mesh>
+      <mesh position={[0, 0.075, 2.8]}>
+        <boxGeometry args={[36, 0.15, 0.22]} />
+        <meshStandardMaterial color="#4a4a45" roughness={1} metalness={0} />
+      </mesh>
+
+      {/* Permukaan air — NormalBlending (bukan Additive) + alpha ~0.85,
+          depthWrite false agar transparansi berlapis dengan riverbed. */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.06, 2]}>
+        <planeGeometry args={[36, 1.38]} />
+        <shaderMaterial
+          ref={matRef}
+          vertexShader={vertexShader}
+          fragmentShader={fragmentShader}
+          uniforms={uniforms}
+          transparent
+          depthWrite={false}
+          blending={THREE.NormalBlending}
+        />
+      </mesh>
+    </group>
   )
 }

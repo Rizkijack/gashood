@@ -10,6 +10,10 @@ interface GasBuildingProps {
   position: [number, number, number];
 }
 
+// Tinggi tetap (world units) plinth & atap — tidak ikut scale tinggi bangunan.
+const PLINTH_HEIGHT = 0.12;
+const ROOF_HEIGHT = 0.15;
+
 /** Color scale per 3D_DESIGN.md gas price bracket (Gwei) */
 function getColorForGasPrice(avgGasPrice: number): string {
   if (avgGasPrice === 0) return "#333344";
@@ -25,10 +29,69 @@ function formatLabel(txType: string): string {
   return txType.replace(/_/g, " ").toUpperCase();
 }
 
+/* ---- Jendela procedural (CanvasTexture) -----------------------------------
+ * Satu tekstur "grid jendela" per baseColor, di-cache agar tidak dibuat ulang
+ * saat re-render. Dipakai sebagai map + emissiveMap material body — ZERO extra
+ * draw call (AC rekonstruksi visual). Jendela menyala lewat emissiveIntensity
+ * yang sudah ada (emissiveMap × emissive color × intensity). */
+const windowTextureCache = new Map<string, THREE.CanvasTexture>();
+
+function getWindowTexture(baseColor: string): THREE.CanvasTexture {
+  const cached = windowTextureCache.get(baseColor);
+  if (cached) return cached;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 256;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas 2D tidak tersedia");
+
+  // Dinding gelap — warna asli bangunan tetap terlihat lewat color material.
+  ctx.fillStyle = "#0b0d12";
+  ctx.fillRect(0, 0, 128, 256);
+
+  const cols = 6;
+  const rows = 14;
+  const marginX = 6;
+  const marginY = 5;
+  const cellW = (128 - marginX * 2) / cols;
+  const cellH = (256 - marginY * 2) / rows;
+
+  // PRNG kecil & deterministik untuk variasi jendela (mati/terang) — hasil
+  // konsisten untuk baseColor yang sama (cache), bukan random per render.
+  let seed = 7;
+  const rnd = () => {
+    seed = (seed * 16807) % 2147483647;
+    return seed / 2147483647;
+  };
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (rnd() < 0.12) continue; // sebagian jendela mati — lebih realistis
+      const glow = 0.75 + rnd() * 0.25;
+      const x = marginX + c * cellW + 1.5;
+      const y = marginY + r * cellH + 1.5;
+      const w = cellW - 3;
+      const h = cellH - 3;
+      const grad = ctx.createLinearGradient(0, y, 0, y + h);
+      grad.addColorStop(0, `rgba(255,255,255,${glow})`);
+      grad.addColorStop(1, `rgba(170,185,255,${glow * 0.65})`);
+      ctx.fillStyle = grad;
+      ctx.fillRect(x, y, w, h);
+    }
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  windowTextureCache.set(baseColor, tex);
+  return tex;
+}
+
 export function GasBuilding({ txType, position }: GasBuildingProps) {
   const [isHovered, setIsHovered] = useState(false);
 
-  // Subscribe to metrics for this txType
+  // Subscribe ke metrics store untuk txType ini (kontrak dipertahankan).
   const metric = useGasStore((s) => s.gasMetrics.get(txType));
   const hoveredType = useGasStore((s) => s.hoveredType);
   const selectedType = useGasStore((s) => s.selectedType);
@@ -50,6 +113,14 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
 
   const baseColor = useMemo(() => getColorForGasPrice(avgGasPrice), [avgGasPrice]);
 
+  // Tekstur jendela — dibuat sekali lalu di-cache per baseColor (bukan per frame).
+  const windowTexture = useMemo(() => getWindowTexture(baseColor), [baseColor]);
+
+  // Warna turunan plinth & atap: baseColor digelapkan ~28-30% — hitung sekali
+  // saat baseColor berubah via useMemo, BUKAN per frame (AC).
+  const plinthColor = useMemo(() => new THREE.Color(baseColor).multiplyScalar(0.7), [baseColor]);
+  const roofColor = useMemo(() => new THREE.Color(baseColor).multiplyScalar(0.72), [baseColor]);
+
   // Emissive intensity dari recentTxCount: normalize 0..50 -> 0.1..0.8
   const emissiveIntensity = useMemo(() => {
     const normalized = Math.min(recentTxCount / 50, 1);
@@ -59,42 +130,47 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
   const isSelected = selectedType === txType;
   const isStoreHovered = hoveredType === txType;
   const activeHover = isHovered || isStoreHovered;
+  const hoverBoost = activeHover || isSelected ? 1.05 : 1;
 
   // ---- L17 + L21: satu useFrame yang menggabungkan lerp & pulse ----
-  const meshRef = useRef<THREE.Mesh>(null);
+  // GROUP = body + plinth + roof (AC: lerp diterapkan ke group, bukan mesh
+  // tunggal). Geometry SATU KALI (unit 1×1×1) — ukuran data lewat scale.
+  const groupRef = useRef<THREE.Group>(null);
+  const plinthRef = useRef<THREE.Mesh>(null);
+  const roofRef = useRef<THREE.Mesh>(null);
   const matRef = useRef<THREE.MeshStandardMaterial>(null);
-  const outlineRef = useRef<THREE.Mesh>(null);
 
-  // L17: state animasi per bangunan (tanpa alokasi per frame)
+  // State animasi per bangunan (tanpa alokasi per frame)
   const currentHeightRef = useRef<number | null>(null); // null = snap frame pertama
   const currentColorRef = useRef(new THREE.Color(baseColor));
   const targetColorRef = useRef(new THREE.Color(baseColor));
   const lastBaseColorRef = useRef(baseColor);
 
-  // L21: state pulse
+  // State pulse
   const pulseRef = useRef(0);
   const prevTxCountRef = useRef(0);
 
   useFrame(() => {
-    const mesh = meshRef.current;
+    const group = groupRef.current;
     const mat = matRef.current;
-    if (!mesh || !mat) return;
+    if (!group || !mat) return;
 
-    // (a) L17 — lerp tinggi (faktor 0.05) & posisi y = height/2 agar
-    // bangunan tumbuh dari lantai.
+    // (a) L17 — lerp tinggi (faktor 0.05); posisi y = height/2 agar bangunan
+    // tumbuh dari lantai (group origin = dasar bangunan; body unit di [0,0,0]
+    // → world span [0, height]). Lerp ke GROUP scale [width, height, width].
     if (currentHeightRef.current === null) currentHeightRef.current = height;
     currentHeightRef.current = THREE.MathUtils.lerp(currentHeightRef.current, height, 0.05);
     const currentHeight = currentHeightRef.current;
 
-    // (a) L17 — lerp warna (faktor 0.03), tanpa alokasi. Target hanya
-    // di-parse saat baseColor berubah (re-render oleh store), bukan per frame.
+    // (a) L17 — lerp warna (faktor 0.03), tanpa alokasi. Target hanya di-parse
+    // saat baseColor berubah (re-render oleh store), bukan per frame.
     if (lastBaseColorRef.current !== baseColor) {
       targetColorRef.current.set(baseColor);
       lastBaseColorRef.current = baseColor;
     }
     currentColorRef.current.lerp(targetColorRef.current, 0.03);
     mat.color.copy(currentColorRef.current);
-    mat.emissive.copy(currentColorRef.current);
+    mat.emissive.copy(currentColorRef.current); // glow lewat emissiveMap jendela
 
     // (b) L21 — pulse: recentTxCount naik -> pulse = 1, decay x0.95/frame.
     if (recentTxCount > prevTxCountRef.current) pulseRef.current = 1;
@@ -102,30 +178,32 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
     pulseRef.current *= 0.95;
     const pulse = pulseRef.current;
 
-    // Hover/selected dipertahankan: boost 1.05 digabungkan ke skala
-    // (setara displayScale lama [1.05, 1.05, 1.05] pada mesh berskala data).
-    const hoverBoost = activeHover || isSelected ? 1.05 : 1;
+    // Hover/selected dipertahankan: boost 1.05 digabungkan ke skala group.
+    const hoverBoostLocal = activeHover || isSelected ? 1.05 : 1;
+    const sclX = width * (1 + pulse * 0.05) * hoverBoostLocal;
+    const sclY = currentHeight * hoverBoostLocal;
+    group.scale.set(sclX, sclY, sclX);
+    group.position.y = currentHeight / 2;
 
-    // L21: pulse ke scale.x/z — baseWidth x (1 + pulse x 0.05).
-    mesh.scale.set(
-      width * (1 + pulse * 0.05) * hoverBoost,
-      currentHeight * hoverBoost,
-      width * (1 + pulse * 0.05) * hoverBoost
-    );
-    mesh.position.y = currentHeight / 2;
+    // Plinth & atap tetap tipis di dunia (0.12/0.15) — counter-scale sumbu Y
+    // terhadap group yang sudah diskalakan tinggi bangunan (lebar x/z otomatis
+    // mengikuti group: 1.05× untuk plinth & atap — radius efektif plinth max
+    // 1.158, lihat DataRiver untuk clearance sungai).
+    const plinth = plinthRef.current;
+    if (plinth) {
+      plinth.scale.set(1.05, PLINTH_HEIGHT / sclY, 1.05);
+      plinth.position.y = (PLINTH_HEIGHT / 2 - currentHeight / 2) / sclY;
+    }
+    const roof = roofRef.current;
+    if (roof) {
+      roof.scale.set(1.05, ROOF_HEIGHT / sclY, 1.05);
+      roof.position.y = (currentHeight / 2 + ROOF_HEIGHT / 2) / sclY;
+    }
 
     // L21: pulse ke emissiveIntensity (+pulse x 0.5), perilaku hover/selected
     // lama (x1.8) dipertahankan dan digabungkan, tidak saling menimpa.
     mat.emissiveIntensity =
       emissiveIntensity * (activeHover || isSelected ? 1.8 : 1) + pulse * 0.5;
-
-    // Outline wireframe mengikuti skala bangunan yang dianimasikan
-    // (setara skala lama [1.08, 1.02, 1.08] di atas ukuran data).
-    const outline = outlineRef.current;
-    if (outline) {
-      outline.scale.set(width * 1.08, currentHeight * 1.02, width * 1.08);
-      outline.position.y = currentHeight / 2;
-    }
   });
 
   const handlePointerOver = (e: { stopPropagation: () => void }) => {
@@ -156,47 +234,103 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
   return (
     <group position={position}>
       {/*
-        F-4: SATU unit boxGeometry (1,1,1) statis — nol BufferGeometry dibuat
-        ulang per poll. Ukuran data (width/height) lewat scale, dianimasikan
-        useFrame di atas. position/scale JSX = nilai awal (target); useFrame
-        mengambil alih setiap frame.
+        ARSITEKTUR baru (AC rekonstruksi): body utama + plinth/fondasi + atap/
+        parapet dalam SATU group animasi.
+        - Geometry SATU KALI (unit) — ukuran data lewat transform group.
+        - useFrame me-lerp scale/posisi group; mesh anak statis.
+        - Group origin = DASAR bangunan (body unit di posisi [0,0,0] → base
+          menempel lantai, bukan melayang di h/2).
+        - Outline = child group → otomatis mengikuti lerp/pulse/hover (1.08×).
       */}
-      <mesh
-        ref={meshRef}
+      <group
+        ref={groupRef}
         position={[0, height / 2, 0]}
         scale={[width, height, width]}
-        castShadow
-        receiveShadow
-        onPointerOver={handlePointerOver}
-        onPointerOut={handlePointerOut}
-        onClick={handleClick}
       >
-        <boxGeometry args={[1, 1, 1]} />
-        {/* color/emissive/emissiveIntensity dimiliki useFrame (lerp + pulse) */}
-        <meshStandardMaterial
-          ref={matRef}
-          metalness={0.2}
-          roughness={0.5}
-          transparent={avgGasUsed === 0}
-          opacity={avgGasUsed === 0 ? 0.6 : 1}
-        />
-      </mesh>
-
-      {/* Selected outline effect via secondary wireframe box — unit geometry
-          + scale (F-4), mengikuti animasi useFrame. */}
-      {isSelected && (
+        {/* Body utama — jendela CanvasTexture (map + emissiveMap, 1 material).
+            Unit box ±0.5 di origin group → world span [0, height]. */}
         <mesh
-          ref={outlineRef}
-          position={[0, height / 2, 0]}
-          scale={[width * 1.08, height * 1.02, width * 1.08]}
+          position={[0, 0, 0]}
+          castShadow
+          receiveShadow
+          onPointerOver={handlePointerOver}
+          onPointerOut={handlePointerOut}
+          onClick={handleClick}
         >
           <boxGeometry args={[1, 1, 1]} />
-          <meshBasicMaterial color={baseColor} wireframe transparent opacity={0.35} />
+          {/* color/emissive/emissiveIntensity dimiliki useFrame (lerp + pulse) */}
+          <meshStandardMaterial
+            ref={matRef}
+            map={windowTexture}
+            emissiveMap={windowTexture}
+            metalness={0.35}
+            roughness={0.4}
+            transparent={avgGasUsed === 0}
+            opacity={avgGasUsed === 0 ? 0.6 : 1}
+          />
         </mesh>
-      )}
 
-      {/* Floating label — wrapped in <Billboard> so the text always faces
-          the camera (drei <Text> alone does NOT auto-billboard) */}
+        {/* Plinth/fondasi: 1.05× lebar body (radius efektif max 1.158 — lihat
+            DataRiver untuk clearance sungai), tipis 0.12 — ikut memudar saat
+            avgGasUsed === 0 (transparent di material masing-masing).
+            Handler pointer sama dengan body → tidak ada dead-zone hover/click. */}
+        <mesh
+          ref={plinthRef}
+          position={[0, (PLINTH_HEIGHT / 2 - height / 2) / (height * hoverBoost), 0]}
+          scale={[1.05, PLINTH_HEIGHT / (height * hoverBoost), 1.05]}
+          receiveShadow
+          onPointerOver={handlePointerOver}
+          onPointerOut={handlePointerOut}
+          onClick={handleClick}
+        >
+          <boxGeometry args={[1, 1, 1]} />
+          <meshStandardMaterial
+            color={plinthColor}
+            roughness={0.6}
+            metalness={0.2}
+            transparent={avgGasUsed === 0}
+            opacity={avgGasUsed === 0 ? 0.6 : 1}
+          />
+        </mesh>
+
+        {/* Atap/parapet: scale x/z lokal 1.05 → lebar atap = width × 1.05
+            OTOMATIS mengikuti width aktual bangunan (termasuk pulse/hover —
+            karena di dalam group berskala). Tipis 0.15, metalness tinggi,
+            warna senada lebih gelap (dihitung sekali, bukan per frame).
+            Handler pointer sama dengan body → tidak ada dead-zone hover/click. */}
+        <mesh
+          ref={roofRef}
+          position={[0, (height / 2 + ROOF_HEIGHT / 2) / (height * hoverBoost), 0]}
+          scale={[1.05, ROOF_HEIGHT / (height * hoverBoost), 1.05]}
+          onPointerOver={handlePointerOver}
+          onPointerOut={handlePointerOut}
+          onClick={handleClick}
+        >
+          <boxGeometry args={[1, 1, 1]} />
+          <meshStandardMaterial
+            color={roofColor}
+            metalness={0.7}
+            roughness={0.3}
+            transparent={avgGasUsed === 0}
+            opacity={avgGasUsed === 0 ? 0.6 : 1}
+          />
+        </mesh>
+
+        {/* Selected outline via wireframe box — child group: skala lokal statis
+            1.08× group (AC), mengikuti animasi group tanpa update per frame.
+            Posisi origin group (dasar bangunan) + scale y 1.02 → membungkus
+            body [0, height] tanpa melayang. */}
+        {isSelected && (
+          <mesh position={[0, 0, 0]} scale={[1.08, 1.02, 1.08]}>
+            <boxGeometry args={[1, 1, 1]} />
+            <meshBasicMaterial color={baseColor} wireframe transparent opacity={0.35} />
+          </mesh>
+        )}
+      </group>
+
+      {/* Floating label — wrapped in <Billboard> agar selalu menghadap kamera
+          (drei <Text> tidak auto-billboard). Di luar group animasi → tidak ikut
+          scale bangunan (perilaku lama dipertahankan). */}
       <Billboard position={[0, height + 0.7, 0]}>
         <Text
           fontSize={0.3}
