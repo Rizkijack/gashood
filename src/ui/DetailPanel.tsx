@@ -73,7 +73,7 @@ const styles: Record<string, React.CSSProperties> = {
 
 /**
  * 4.5 — Detail panel for the selected transaction type.
- * Shows min/avg/max gas price, avg gas used, total fee, tx count and a short
+ * Shows min/avg/max gas price, avg gas used, fee/tx, tx count and a short
  * list of recent transactions for that type. Close → selectType(null).
  */
 export function DetailPanel() {
@@ -96,6 +96,11 @@ export function DetailPanel() {
   // totalTxCount > 0 tapi semua receipt tanpa harga (avgGasPrice 0) →
   // minGasPrice bisa Infinity, jangan render "Infinity Gwei".
   const hasData = metric.avgGasPrice > 0 && metric.totalTxCount > 0;
+  // Fee rata-rata per transaksi kategori terpilih — sumber sama dengan total
+  // fee (fee per tx dijumlah), dibagi jumlah tx kategori tersebut.
+  // hasData menjamin totalTxCount > 0 (tidak pernah bagi nol); di luar
+  // hasData nilainya 0 dan tidak pernah dirender.
+  const feePerTx = hasData ? metric.totalFeeEth / metric.totalTxCount : 0;
   const trendArrow = metric.trend === "up" ? "↗" : metric.trend === "down" ? "↘" : "→";
 
   return (
@@ -137,10 +142,10 @@ export function DetailPanel() {
           <div style={styles.sectionTitle}>Totals</div>
           <div style={styles.statsGrid}>
             <div style={styles.statCard}>
-              <div style={styles.statLabel}>Total Fee (ETH)</div>
-              <div style={styles.statValue}>{hasData ? formatEth(metric.totalFeeEth) : "—"}</div>
-              {hasData && ethUsdPrice !== null && formatUsd(ethToUsd(metric.totalFeeEth, ethUsdPrice)) !== "" && (
-                <div style={styles.statValueUsd}>≈ {formatUsd(ethToUsd(metric.totalFeeEth, ethUsdPrice))}</div>
+              <div style={styles.statLabel}>Fee/Tx (ETH)</div>
+              <div style={styles.statValue}>{hasData ? formatEth(feePerTx) : "—"}</div>
+              {hasData && ethUsdPrice !== null && formatUsd(ethToUsd(feePerTx, ethUsdPrice)) !== "" && (
+                <div style={styles.statValueUsd}>≈ {formatUsd(ethToUsd(feePerTx, ethUsdPrice))}</div>
               )}
             </div>
             <div style={styles.statCard}>

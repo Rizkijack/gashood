@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   aggregateMetrics,
   parseCoinPrice,
+  parseGasPriceFromStats,
   processBlock,
   refreshEthPriceIfDue,
   stopCollecting,
@@ -236,12 +237,33 @@ describe('parseCoinPrice (harga ETH dari Blockscout /stats)', () => {
   })
 })
 
+describe('parseGasPriceFromStats (gas real-time Blockscout gas tracker)', () => {
+  it('happy: average valid → number (Gwei)', () => {
+    expect(parseGasPriceFromStats({ slow: 0.01, average: 0.48, fast: 1.2 })).toBe(0.48)
+    expect(parseGasPriceFromStats({ slow: 0.02, average: 5, fast: 10 })).toBe(5)
+  })
+
+  it('edge: average 0 / negatif / NaN → null (nilai rusak tidak boleh jadi sumber utama currentGasPrice)', () => {
+    expect(parseGasPriceFromStats({ slow: 0, average: 0, fast: 0 })).toBeNull()
+    expect(parseGasPriceFromStats({ slow: 0.01, average: -1, fast: 1.2 })).toBeNull()
+    expect(parseGasPriceFromStats({ slow: 0.01, average: NaN, fast: 1.2 })).toBeNull()
+  })
+
+  it('edge: gas_prices undefined / average undefined → null (fallback ke eth_gasPrice RPC)', () => {
+    expect(parseGasPriceFromStats(undefined)).toBeNull()
+    expect(parseGasPriceFromStats({ slow: 0, average: undefined as unknown as number, fast: 1 })).toBeNull()
+  })
+})
+
 describe('refreshEthPriceIfDue (harga ETH Blockscout — throttle 60s, non-fatal)', () => {
   let nowMs: number
 
   beforeEach(() => {
     nowMs = 1_000_000
     vi.spyOn(Date, 'now').mockImplementation(() => nowMs)
+    // Isolasi store (instance sama lintas test di file ini): reset tulisan
+    // test lain sebelum asersi.
+    useGasStore.setState({ blockscoutGasPrice: null })
   })
 
   afterEach(() => {
@@ -277,5 +299,25 @@ describe('refreshEthPriceIfDue (harga ETH Blockscout — throttle 60s, non-fatal
     nowMs += 60_000 // window 60s terlewati → boleh menembak lagi
     await refreshEthPriceIfDue(0)
     expect(blockscout.getStats).toHaveBeenCalledTimes(2)
+  })
+
+  // Catatan: jalur WRITE (setEthUsdPrice / setBlockscoutGasPrice) tidak bisa
+  // diuji di file ini karena guard B6 mem-block saat isRunning=false (loop
+  // sengaja tidak pernah dinyalakan — lihat header file). Perilaku store
+  // setBlockscoutGasPrice + preferensi Blockscout-over-RPC diuji di
+  // src/store/__tests__/gas-store.test.ts.
+
+  it('guard B6: generation stale (myRun !== runId) → coin_price & gas_prices sama-sama TIDAK ditulis', async () => {
+    blockscout.getStats.mockResolvedValue({
+      coin_price: '2393.83',
+      gas_prices: { slow: 0.01, average: 0.48, fast: 1.2 },
+    })
+
+    nowMs = 11_000_000
+    await refreshEthPriceIfDue(999_999) // runId masih 0 (loop tak pernah start)
+
+    const state = useGasStore.getState()
+    expect(state.blockscoutGasPrice).toBeNull()
+    expect(state.networkStats.ethUsdPrice).toBeNull()
   })
 })

@@ -1,5 +1,5 @@
 import { getBlock, getGasPrice, getLatestBlockNumber, batchGetReceipts } from '@/data/rpc-client'
-import { getStats } from '@/data/blockscout-client'
+import { getStats, type BlockscoutStats } from '@/data/blockscout-client'
 import { classifyTransaction, TxType, type ClassifiedTransaction, type TransactionData } from '@/data/tx-classifier'
 import { useGasStore, type GasMetric } from '@/store/gas-store'
 import { calculateTotalFee, weiToGwei, weiToEth } from '@/utils/gas-math'
@@ -57,7 +57,22 @@ export function parseCoinPrice(raw: string): number | null {
 }
 
 /**
- * Refresh harga ETH (USD) dari Blockscout /stats — MAKSIMAL sekali per 60 detik.
+ * Murni: parse `gas_prices` Blockscout (data yang sama dengan halaman
+ * /gas-tracker) → ambil nilai `average` (Gwei), atau null bila tidak valid —
+ * termasuk 0/negatif/NaN: nilai rusak tidak boleh jadi SUMBER UTAMA
+ * currentGasPrice (UI akan fallback ke eth_gasPrice RPC).
+ */
+export function parseGasPriceFromStats(
+  gasPrices: BlockscoutStats['gas_prices'] | undefined
+): number | null {
+  const average = gasPrices?.average
+  return average !== undefined && Number.isFinite(average) && average > 0 ? average : null
+}
+
+/**
+ * Refresh harga ETH (USD) + gas price real-time dari Blockscout /stats —
+ * MAKSIMAL sekali per 60 detik, SATU fetch untuk keduanya (TANPA request
+ * tambahan; gas_prices datang dari response yang sama dengan coin_price).
  * NON-FATAL: kegagalan fetch hanya console.warn, TIDAK mengganggu loop block,
  * TIDAK menaikkan consecutiveFailures polling block.
  * (Diekspor untuk test; perilaku internal tetap sama.)
@@ -76,6 +91,12 @@ export async function refreshEthPriceIfDue(myRun: number): Promise<void> {
     const price = parseCoinPrice(stats.coin_price)
     if (price !== null) {
       useGasStore.getState().setEthUsdPrice(price)
+    }
+    // gas_prices.average (Blockscout gas tracker, sumber utama currentGasPrice)
+    // ditulis HANYA setelah guard generation di atas — sama-sama non-fatal.
+    const gasPriceGwei = parseGasPriceFromStats(stats.gas_prices)
+    if (gasPriceGwei !== null) {
+      useGasStore.getState().setBlockscoutGasPrice(gasPriceGwei)
     }
   } catch (error) {
     console.warn('[gas-collector] Gagal fetch harga ETH dari Blockscout (non-fatal):', error)

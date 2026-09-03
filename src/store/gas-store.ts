@@ -38,6 +38,12 @@ export interface GasStore {
   error: string | null
   /** Kegagalan polling beruntun (increment saat cycle gagal, reset saat sukses). */
   consecutiveFailures: number
+  /**
+   * Harga gas real-time (Gwei) dari Blockscout gas tracker (gas_prices.average,
+   * sama dengan halaman /gas-tracker) — SUMBER UTAMA currentGasPrice.
+   * null = poll Blockscout belum sukses → fallback ke eth_gasPrice RPC.
+   */
+  blockscoutGasPrice: number | null
 
   updateMetrics: (txs: ClassifiedTransaction[], blockNumber: number, currentGasPriceWei?: bigint) => void
   /** Alias sesuai penamaan dokumen (BUILD_STEPS.md Langkah 9) — logika sama dengan updateMetrics. */
@@ -50,6 +56,7 @@ export interface GasStore {
   setError: (error: string | null) => void
   setConsecutiveFailures: (count: number) => void
   setEthUsdPrice: (price: number | null) => void
+  setBlockscoutGasPrice: (gwei: number | null) => void
   clearRecentTxs: () => void
 }
 
@@ -102,9 +109,10 @@ export const useGasStore = create<GasStore>((set, get) => ({
   isCollecting: false,
   error: null,
   consecutiveFailures: 0,
+  blockscoutGasPrice: null,
 
   updateMetrics: (txs, blockNumber, currentGasPriceWei) => {
-    const { gasMetrics, recentTxs } = get()
+    const { gasMetrics, recentTxs, blockscoutGasPrice } = get()
 
     const newMetrics = new Map(gasMetrics)
 
@@ -161,12 +169,16 @@ export const useGasStore = create<GasStore>((set, get) => ({
     const blockTimeSec = ROBINHOOD_CHAIN.blockTime / 1000
     const tps = blockTimeSec > 0 ? txs.length / blockTimeSec : txs.length
 
-    // currentGasPrice dari eth_gasPrice (getGasPrice) — bukan dari
-    // txs[0].effectiveGasPrice yang menyesatkan (audit B2/security).
-    const currentGasPrice =
+    // currentGasPrice — SUMBER UTAMA: Blockscout gas tracker (gas_prices.average
+    // dari /stats, halaman /gas-tracker; di-poll 1×/60s lewat
+    // refreshEthPriceIfDue). Fallback: eth_gasPrice (getGasPrice) — bukan dari
+    // txs[0].effectiveGasPrice yang menyesatkan (audit B2/security) — dipakai
+    // selama Blockscout belum sukses (blockscoutGasPrice masih null).
+    const rpcGasPrice =
       currentGasPriceWei !== undefined && currentGasPriceWei > 0n
         ? weiToGwei(currentGasPriceWei)
         : prevStats.currentGasPrice
+    const currentGasPrice = blockscoutGasPrice ?? rpcGasPrice
 
     set({
       gasMetrics: newMetrics,
@@ -195,5 +207,12 @@ export const useGasStore = create<GasStore>((set, get) => ({
   setError: (error) => set({ error }),
   setConsecutiveFailures: (count) => set({ consecutiveFailures: count }),
   setEthUsdPrice: (price) => set((s) => ({ networkStats: { ...s.networkStats, ethUsdPrice: price } })),
+  // Hanya ditulis bila nilai valid (guard di gas-collector) — null berarti
+  // belum ada data Blockscout, jangan menimpa nilai RPC fallback yang tampil.
+  // Guard ini menegakkan kontrak "sticky": null tidak pernah menimpa nilai.
+  setBlockscoutGasPrice: (gwei) => {
+    if (gwei === null) return
+    set({ blockscoutGasPrice: gwei })
+  },
   clearRecentTxs: () => set({ recentTxs: [] }),
 }))

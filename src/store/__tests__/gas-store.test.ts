@@ -47,6 +47,7 @@ function makeInitialState() {
       lastBlockNumber: 0,
       ethUsdPrice: null,
     },
+    blockscoutGasPrice: null as number | null,
     selectedType: null as TxType | null,
     hoveredType: null as TxType | null,
     timeRange: '5m' as const,
@@ -208,6 +209,48 @@ describe('setEthUsdPrice (harga ETH USD)', () => {
     useGasStore.getState().updateFromBlock([makeTx(TxType.NATIVE_TRANSFER)], 5)
 
     expect(useGasStore.getState().networkStats.ethUsdPrice).toBe(3000)
+  })
+})
+
+describe('setBlockscoutGasPrice + preferensi Blockscout-over-RPC (sumber utama gas price)', () => {
+  it('setBlockscoutGasPrice mengubah blockscoutGasPrice tanpa menyentuh networkStats', () => {
+    useGasStore.getState().setBlockscoutGasPrice(0.48)
+
+    const state = useGasStore.getState()
+    expect(state.blockscoutGasPrice).toBe(0.48)
+    // currentGasPrice hanya berubah lewat updateMetrics — action ini sekadar
+    // mengisi sumber utama dari Blockscout gas tracker (throttle 60s).
+    expect(state.networkStats.currentGasPrice).toBe(0)
+    expect(state.networkStats.lastBlockNumber).toBe(0)
+  })
+
+  it('updateMetrics: blockscoutGasPrice non-null → MENANGKAN eth_gasPrice RPC (Blockscout = sumber utama)', () => {
+    useGasStore.getState().setBlockscoutGasPrice(0.48)
+
+    // RPC memberi 5 gwei, tapi tampilan harus pakai gas tracker (0.48)
+    useGasStore.getState().updateFromBlock([makeTx(TxType.NATIVE_TRANSFER)], 42, 5_000_000_000n)
+
+    expect(useGasStore.getState().networkStats.currentGasPrice).toBe(0.48)
+  })
+
+  it('updateMetrics: blockscoutGasPrice null (poll Blockscout belum sukses) → fallback eth_gasPrice RPC', () => {
+    useGasStore.getState().updateFromBlock([makeTx(TxType.NATIVE_TRANSFER)], 42, 5_000_000_000n)
+
+    expect(useGasStore.getState().networkStats.currentGasPrice).toBe(5)
+  })
+
+  it('updateMetrics: RPC 0n + blockscoutGasPrice null → pertahankan nilai sebelumnya (fallback lama tetap)', () => {
+    useGasStore.getState().updateFromBlock([makeTx(TxType.NATIVE_TRANSFER)], 42, 5_000_000_000n)
+    useGasStore.getState().updateFromBlock([makeTx(TxType.NATIVE_TRANSFER)], 43, 0n)
+
+    expect(useGasStore.getState().networkStats.currentGasPrice).toBe(5)
+  })
+
+  it('updateMetrics tidak mengubah blockscoutGasPrice (hanya collector yang menulisnya)', () => {
+    useGasStore.getState().setBlockscoutGasPrice(0.48)
+    useGasStore.getState().updateFromBlock([makeTx(TxType.NATIVE_TRANSFER)], 42, 5_000_000_000n)
+
+    expect(useGasStore.getState().blockscoutGasPrice).toBe(0.48)
   })
 })
 
