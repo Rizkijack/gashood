@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { TxType } from "@/data/tx-classifier";
 import { useGasStore } from "@/store/gas-store";
 import { CITY_SCALE, buildingHeight } from "./layout";
+import { GAS_BRACKETS } from "@/ui/tx-theme";
 import {
   PODIUM_HEIGHT,
   PODIUM_WIDTH,
@@ -32,15 +33,56 @@ const ROOF_HEIGHT = 0.15 * CITY_SCALE;
 // Cap atap sedikit lebih lebar dari stack teratas (parapet menjorok keluar).
 const ROOF_MARGIN = 1.05;
 
-/** Color scale per 3D_DESIGN.md gas price bracket (Gwei) */
+/** Parse hex color ke [r, g, b] (0–1) */
+function hexToRgb(hex: string): [number, number, number] {
+  const h = hex.replace("#", "");
+  return [
+    parseInt(h.substring(0, 2), 16) / 255,
+    parseInt(h.substring(2, 4), 16) / 255,
+    parseInt(h.substring(4, 6), 16) / 255,
+  ];
+}
+
+/** Lerp antara dua warna hex, t ∈ [0, 1] */
+function lerpColor(a: string, b: string, t: number): string {
+  const [r1, g1, b1] = hexToRgb(a);
+  const [r2, g2, b2] = hexToRgb(b);
+  const r = Math.round((r1 + (r2 - r1) * t) * 255);
+  const g = Math.round((g1 + (g2 - g1) * t) * 255);
+  const blue = Math.round((b1 + (b2 - b1) * t) * 255);
+  return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${blue.toString(16).padStart(2, "0")}`;
+}
+
+/**
+ * Smooth color interpolation dari GAS_BRACKETS (barometer).
+ * Low gwei → hijau, high gwei → merah.
+ * Interpolasi linear antara bracket endpoints.
+ */
 function getColorForGasPrice(avgGasPrice: number): string {
-  if (avgGasPrice === 0) return "#333344";
-  if (avgGasPrice < 0.01) return "#00FF88";
-  if (avgGasPrice < 0.05) return "#44CC66";
-  if (avgGasPrice < 0.1) return "#88BB44";
-  if (avgGasPrice < 0.5) return "#CCAA22";
-  if (avgGasPrice < 1.0) return "#FF7722";
-  return "#FF2244";
+  if (avgGasPrice <= 0) return "#333344";
+
+  // Cari bracket yang cocok
+  for (let i = 0; i < GAS_BRACKETS.length; i++) {
+    const bracket = GAS_BRACKETS[i];
+    const min = bracket.min ?? -Infinity;
+    const max = bracket.max ?? Infinity;
+
+    if (avgGasPrice >= min && avgGasPrice < max) {
+      // Interpolasi di dalam bracket ini
+      if (i < GAS_BRACKETS.length - 1 && bracket.max != null) {
+        const next = GAS_BRACKETS[i + 1];
+        const range = bracket.max - min;
+        if (range > 0) {
+          const t = (avgGasPrice - min) / range;
+          return lerpColor(bracket.color, next.color, t);
+        }
+      }
+      return bracket.color;
+    }
+  }
+
+  // Di atas semua bracket → warna terakhir (merah)
+  return GAS_BRACKETS[GAS_BRACKETS.length - 1].color;
 }
 
 function formatLabel(txType: string): string {
