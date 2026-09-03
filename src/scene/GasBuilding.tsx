@@ -12,6 +12,8 @@ import {
   getFacadeTextures,
   getPodiumGeometry,
   getPodiumTextures,
+  getRoofCapGeometry,
+  getRoofEmissiveTexture,
   getTopStackWidth,
   getTowerGeometry,
   registerRooftopLive,
@@ -88,6 +90,9 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
   const topStackWidth = useMemo(() => getTopStackWidth(txType), [txType]);
   const podiumTextures = useMemo(() => getPodiumTextures(), []);
   const podiumGeometry = useMemo(() => getPodiumGeometry(), []);
+  // Cap atap: geometri UV-redirect + tekstur hairline (cache module-scope).
+  const roofGeometry = useMemo(() => getRoofCapGeometry(), []);
+  const roofEmissive = useMemo(() => getRoofEmissiveTexture(), []);
 
   // Warna turunan podium & atap: baseColor digelapkan ~28-30% — dihitung
   // sekali saat baseColor berubah via useMemo, BUKAN per frame (AC).
@@ -165,7 +170,12 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
       podiumMat.emissive.copy(currentColorRef.current);
     }
     const roofMat = roofMatRef.current;
-    if (roofMat) roofMat.color.copy(currentColorRef.current).multiplyScalar(0.72);
+    if (roofMat) {
+      roofMat.color.copy(currentColorRef.current).multiplyScalar(0.72);
+      // Hairline parapet: emissive = warna bracket (lerp) × emissiveMap garis
+      // 2px; intensitas statis 0.22 (restrained) — set 0 alokasi per frame.
+      roofMat.emissive.copy(currentColorRef.current);
+    }
 
     // (b) L21 — pulse: recentTxCount naik -> pulse = 1, decay x0.95/frame.
     if (recentTxCount > prevTxCountRef.current) pulseRef.current = 1;
@@ -252,8 +262,10 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
         scale={[width, height, width]}
       >
         {/* Tower — merge stack + tekstur jendela per lantai (map+emissiveMap).
+            Material berlapis (Ethereal Glass): roughnessMap noise (kilap tidak
+            seragam) + vertexColors fake-AO (kaki gedung lebih gelap).
             Kaca arketipe glass memanfaatkan Environment preset="city" via
-            envMapIntensity (refleksi langit di kaca biru gelap). */}
+            envMapIntensity restrained (refleksi langit di kaca biru gelap). */}
         <mesh
           geometry={towerGeometry}
           castShadow
@@ -267,6 +279,8 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
             ref={matRef}
             map={facade.map}
             emissiveMap={facade.emissiveMap}
+            roughnessMap={facade.roughnessMap}
+            vertexColors
             metalness={facadeParams.metalness}
             roughness={facadeParams.roughness}
             envMapIntensity={facadeParams.envMapIntensity}
@@ -306,21 +320,26 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
         </mesh>
 
         {/* Cap atap/parapet: menutup stack teratas (lebar mengikuti arketipe —
-            setback → cap lebih kecil). Metalness tinggi, warna senada lebih
-            gelap (lerp via useFrame, dihitung tanpa alokasi).
+            setback → cap lebih kecil). Metalness tinggi (machined hardware),
+            warna senada lebih gelap + HAIRLINE light edge di tepi atas sisi
+            parapet via emissiveMap garis tipis (emissive = bracket color ×
+            0.22 — restrained, kesan cahaya lantai atap; deck tidak menyala —
+            UV atap/dasar diarahkan ke area hitam canvas).
             Handler pointer sama dengan tower → tidak ada dead-zone hover/click. */}
         <mesh
           ref={roofRef}
+          geometry={roofGeometry}
           position={[0, (height / 2 + ROOF_HEIGHT / 2) / (height * hoverBoost), 0]}
           scale={[topStackWidth * ROOF_MARGIN, ROOF_HEIGHT / (height * hoverBoost), topStackWidth * ROOF_MARGIN]}
           onPointerOver={handlePointerOver}
           onPointerOut={handlePointerOut}
           onClick={handleClick}
         >
-          <boxGeometry args={[1, 1, 1]} />
           <meshStandardMaterial
             ref={roofMatRef}
             color={roofColor}
+            emissiveMap={roofEmissive}
+            emissiveIntensity={0.22}
             metalness={0.7}
             roughness={0.3}
             envMapIntensity={0.8}

@@ -168,6 +168,9 @@ function generateForest(): TreeSpec[] {
 /** Generate rumput di area yang tersisa */
 function generateGrass(): GrassSpec[] {
   const rnd = mulberry32(2048);
+  // RNG terpisah khusus warna — pola POSISI blade tidak berubah (kontrak AC:
+  // mesh/posisi/jumlah vegetasi tidak diubah, hanya warna).
+  const colRnd = mulberry32(991);
   const blades: GrassSpec[] = [];
   const MAP_HALF = 19.5 * CITY_SCALE;
   let guard = 0;
@@ -186,7 +189,10 @@ function generateGrass(): GrassSpec[] {
       rotX: (rnd() - 0.5) * 0.4,
       rotY: rnd() * Math.PI * 2,
       rotZ: (rnd() - 0.5) * 0.4,
-      color: GRASS_COLORS[Math.floor(rnd() * GRASS_COLORS.length)],
+      // Variasi lightness ±8% — rumput tidak seragam ceret.
+      color: GRASS_COLORS[Math.floor(rnd() * GRASS_COLORS.length)]
+        .clone()
+        .multiplyScalar(0.92 + colRnd() * 0.16),
     });
   }
   return blades;
@@ -211,6 +217,12 @@ export function Vegetation() {
     if (!trunk || !canopy1 || !canopy2 || !canopy3) return;
 
     const dummy = new THREE.Object3D();
+    // Variasi warna tajuk ±8% lightness via setColorAt — deterministik dgn
+    // rng TERPISAH (pola posisi pohon tidak berubah); satu faktor per pohon
+    // agar ketiga layer tajuk satu pohon di-tint konsisten. Alokasi hanya
+    // saat mount (instanceColor dibuat sekali), 0 alokasi per frame.
+    const canopyRnd = mulberry32(5511);
+    const scratchColor = new THREE.Color();
 
     for (let i = 0; i < trees.length; i++) {
       const t = trees[i];
@@ -246,12 +258,25 @@ export function Vegetation() {
       dummy.scale.set(tipScale, r * 0.6, tipScale);
       dummy.updateMatrix();
       canopy3.setMatrixAt(i, dummy.matrix);
+
+      // Tint tajuk: three 0.177 menghitung final = material.color × instanceColor,
+      // jadi instanceColor HARUS multiplier grayscale (0.92–1.08, ±8%) — BUKAN
+      // salinan warna base (yang menghasilkan base² × lightness → tajuk ±63%
+      // lebih gelap dari niat). Warna base tinggal di material canopy.
+      const lightness = 0.92 + canopyRnd() * 0.16;
+      scratchColor.setScalar(lightness);
+      for (const canopy of [canopy1, canopy2, canopy3]) {
+        canopy.setColorAt(i, scratchColor);
+      }
     }
 
     trunk.instanceMatrix.needsUpdate = true;
     canopy1.instanceMatrix.needsUpdate = true;
     canopy2.instanceMatrix.needsUpdate = true;
     canopy3.instanceMatrix.needsUpdate = true;
+    if (canopy1.instanceColor) canopy1.instanceColor.needsUpdate = true;
+    if (canopy2.instanceColor) canopy2.instanceColor.needsUpdate = true;
+    if (canopy3.instanceColor) canopy3.instanceColor.needsUpdate = true;
   }, [trees]);
 
   // Matriks + warna rumput — SEKALI saat mount

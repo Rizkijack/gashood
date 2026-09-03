@@ -10,14 +10,18 @@ function safe(value: number, fallback: number): number {
 }
 
 const vertexShader = `
+  uniform float uTime;
   varying vec2 vUv;
   varying vec3 vWorldPos;
-  varying vec3 vNormal;
   void main() {
     vUv = uv;
     vec4 worldPos = modelMatrix * vec4(position, 1.0);
+    // Displacement gelombang KECIL (total ±0.04 unit) — riak permukaan halus;
+    // aman: tidak menyentuh riverbed (y=0.15) maupun bank (tepi plane z=±10.35
+    // tepat memotong inner bank, displacement hanya vertikal).
+    worldPos.y += sin(worldPos.x * 0.08 + uTime * 0.7) * 0.022
+                + cos(worldPos.z * 0.12 + uTime * 0.5) * 0.016;
     vWorldPos = worldPos.xyz;
-    vNormal = normalize(normalMatrix * normal);
     gl_Position = projectionMatrix * viewMatrix * worldPos;
   }
 `
@@ -28,9 +32,9 @@ const fragmentShader = `
   uniform vec3 uColor;
   uniform float uIntensity;
   uniform vec3 uCameraPos;
+  uniform vec3 uSkyColor;
   varying vec2 vUv;
   varying vec3 vWorldPos;
-  varying vec3 vNormal;
 
   // ── Noise functions ──────────────────────────────────────────────
   vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
@@ -77,78 +81,63 @@ const fragmentShader = `
   void main() {
     vec2 uv = vUv;
 
-    // ── 1. Current flow — lambat, organik ──────────────────────────
-    // Base flow: arus utama ke kanan (dx)
+    // ── 1. Current flow — lambat, organik (dipertahankan) ──────────
     float flowX = uOffset * 0.12;
-
-    // Lateral drift: arus menyamping halus (dy sinusoidal)
     float driftY = sin(uv.x * 2.5 + uTime * 0.15) * 0.03;
-
-    // Vortex kecil: area eddy statis di beberapa titik
     float vortex1 = sin(uv.x * 4.0 + 1.3) * cos(uv.y * 3.0 + 0.7) * 0.02;
     float vortex2 = cos(uv.x * 6.0 + 2.1) * sin(uv.y * 5.0 + 1.9) * 0.015;
-
     vec2 flowUV = uv + vec2(flowX, driftY + vortex1 + vortex2);
 
-    // ── 2. Multi-layer noise untuk permukaan air ──────────────────
-    // Layer 1: gelombang besar (arus utama)
+    // ── 2. Layer noise permukaan (dipertahankan) ──────────────────
     float wave1 = fbm(flowUV * 2.0 + uTime * 0.02) * 0.5 + 0.5;
-
-    // Layer 2: riak kecil (detail permukaan)
     float ripple = snoise(flowUV * 8.0 + uTime * 0.08) * 0.5 + 0.5;
 
-    // Layer 3: kilau kasatmata (specular highlight)
-    float sparkle = snoise(flowUV * 16.0 + uTime * 0.3) * 0.5 + 0.5;
-
-    // Gabungkan: wave dominan, ripple sebagai detail, sparkle sebagai highlight
-    float surface = wave1 * 0.6 + ripple * 0.25 + sparkle * 0.15;
-
-    // ── 3. Edge effect — air lebih gelap di tepi (depth cue) ──────
+    // ── 3. Mask kedalaman & tepi (vUv.y; sungai membentang sepanjang uv.x) ──
     float edgeDist = min(vUv.y, 1.0 - vUv.y);
-    float edgeDarken = smoothstep(0.0, 0.2, edgeDist);
-    float edgeHighlight = smoothstep(0.0, 0.08, edgeDist);
+    float centerMask = 1.0 - smoothstep(0.0, 0.28, edgeDist); // 1 = pusat
+    float bankBand = 1.0 - smoothstep(0.0, 0.06, edgeDist);   // 1 = sisip bank
 
-    // ── 4. Warna air realistis ────────────────────────────────────
-    // Base: deep water blue-green
-    vec3 deepWater = vec3(0.02, 0.06, 0.12);
-    vec3 shallowWater = vec3(0.04, 0.12, 0.18);
-    vec3 surfaceHighlight = vec3(0.15, 0.25, 0.30);
+    // ── 4. Depth fake — pusat sungai LEBIH GELAP/dalam vs tepi ────
+    vec3 deepWater = vec3(0.015, 0.045, 0.10);
+    vec3 shallowWater = vec3(0.05, 0.11, 0.16);
+    vec3 waterBase = mix(shallowWater, deepWater, centerMask);
+    waterBase *= 0.85 + wave1 * 0.3; // modulasi arus besar
+    waterBase += uColor * 0.12;      // tint gas price (subtle, dipertahankan)
 
-    // Mix berdasarkan depth (edge = deep, center = shallow)
-    vec3 waterBase = mix(deepWater, shallowWater, edgeDarken);
+    // ── 5. Fresnel sky reflection (Ethereal Glass) ─────────────────
+    // View-dir terhadap UP: sudut landai (horizon) → dominan pantulan langit.
+    vec3 viewDir = normalize(uCameraPos - vWorldPos);
+    float fresnel = pow(1.0 - max(dot(viewDir, vec3(0.0, 1.0, 0.0)), 0.0), 3.0);
+    fresnel = clamp(fresnel, 0.0, 1.0) * 0.65; // restrained — bukan cermin
+    vec3 skyRefl = uSkyColor * (0.85 + ripple * 0.3);
 
-    // Tambah warna dari gas price (subtle tint)
-    vec3 gasTint = uColor * 0.15;
-    waterBase += gasTint;
+    // ── 6. Sun glint memanjang searah aliran (anisotropic-ish) ────
+    // Stretch uv.x (frekuensi rendah sepanjang arus) + smoothstep tinggi
+    // → hanya puncak kilau yang tampak.
+    float glint = snoise(vec2(flowUV.x * 3.0 + uTime * 0.12, flowUV.y * 26.0)) * 0.5 + 0.5;
+    glint = smoothstep(0.78, 0.96, glint) * uIntensity;
 
-    // ── 5. Specular & caustics ────────────────────────────────────
-    // Specular: highlight pada area surface yang tinggi
-    float specular = smoothstep(0.6, 0.85, surface) * uIntensity * 0.5;
+    // ── 7. Foam tepi — band tipis animasi di dekat bank, restrained ──
+    float foamNoise = snoise(vec2(uv.x * 42.0 - flowX * 1.5, uv.y * 6.0) + uTime * 0.1) * 0.5 + 0.5;
+    float foamPulse = 0.5 + 0.5 * sin(uv.x * 9.0 - uTime * 0.4 + foamNoise * 3.0);
+    float foam = bankBand * smoothstep(0.45, 0.85, foamNoise * 0.7 + foamPulse * 0.3) * 0.35;
 
-    // Caustics: pola cahaya yang terpantul di dasar
-    float caustics = smoothstep(0.55, 0.75, ripple) * 0.15 * edgeDarken;
+    // ── 8. Caustics dasar (dipertahankan, diredam) ────────────────
+    float caustics = smoothstep(0.55, 0.75, ripple) * 0.08 * (1.0 - centerMask);
 
-    // Shimmer: kilau halus bergerak cepat
-    float shimmer = sin(flowUV.x * 30.0 + uTime * 1.5) * 0.015;
-    shimmer *= smoothstep(0.3, 0.7, vUv.y); // hanya di tengah
+    // ── 9. Final compositing ──────────────────────────────────────
+    vec3 finalColor = mix(waterBase, skyRefl, fresnel);
+    finalColor += vec3(0.10, 0.13, 0.15) * glint;       // glint kebiruan redam
+    finalColor += vec3(0.72, 0.82, 0.88) * foam;        // foam putih-kebiruan kecil
+    finalColor += vec3(caustics * 0.5);
 
-    // ── 6. Fresnel-like rim light ─────────────────────────────────
-    float fresnel = pow(1.0 - max(dot(vNormal, normalize(uCameraPos - vWorldPos)), 0.0), 3.0);
-    fresnel = clamp(fresnel, 0.0, 0.4) * edgeHighlight;
-
-    // ── 7. Final compositing ──────────────────────────────────────
-    vec3 finalColor = waterBase;
-    finalColor += vec3(specular + caustics + shimmer + fresnel);
-
-    // Desaturasi sedikit agar tidak terlalu saturated
+    // Desaturasi sedikit + clamp (dipertahankan dari shader lama).
     float luma = dot(finalColor, vec3(0.299, 0.587, 0.114));
     finalColor = mix(vec3(luma), finalColor, 0.85);
-
-    // Clamp agar tidak blow out
     finalColor = min(finalColor, vec3(0.45));
 
-    // Alpha: lebih transparan di tengah, lebih opaque di tepi
-    float alpha = mix(0.7, 0.92, edgeDarken) * uIntensity * 0.9 + 0.1;
+    // Alpha ~0.85-0.9: pusat sedikit lebih opaque (kolom air lebih dalam).
+    float alpha = mix(0.85, 0.9, centerMask);
 
     gl_FragColor = vec4(finalColor, alpha);
   }
@@ -174,6 +163,10 @@ export function DataRiver() {
       uColor: { value: new THREE.Color('#44CC66') },
       uIntensity: { value: 0.5 },
       uCameraPos: { value: new THREE.Vector3(...DEFAULT_CAMERA) },
+      // BARU (Ethereal Glass): warna pantulan langit untuk fresnel — diambil
+      // dari palet World/SkyDome (fog #0a0a0f, sky dome clear top #1a3a5c):
+      // di antara keduanya agar pantulan restrained, bukan cermin terang.
+      uSkyColor: { value: new THREE.Color('#1c2b3a') },
     }),
     []
   )

@@ -84,7 +84,9 @@ const ARCHETYPES: Record<FacadeArchetype, ArchetypeDef> = {
     litRatio: 0.3,
     metalness: 0.6,
     roughness: 0.22,
-    envMapIntensity: 1.0,
+    // Ethereal Glass: refleksi env di-restrain (~0.6-0.8) — kaca tetap hidup
+    // tanpa mendominasi; kilap detail datang dari roughnessMap noise.
+    envMapIntensity: 0.8,
   },
   // (b) Mid-rise beton — jendela rulek kecil, dinding terekspos, garis lantai.
   concrete: {
@@ -95,7 +97,7 @@ const ARCHETYPES: Record<FacadeArchetype, ArchetypeDef> = {
     litRatio: 0.22,
     metalness: 0.08,
     roughness: 0.78,
-    envMapIntensity: 0.4,
+    envMapIntensity: 0.5,
   },
   // (c) Menara setback — 3 stack mengecil ke atas (gaya korporat 70-an).
   setback: {
@@ -110,7 +112,7 @@ const ARCHETYPES: Record<FacadeArchetype, ArchetypeDef> = {
     litRatio: 0.26,
     metalness: 0.45,
     roughness: 0.4,
-    envMapIntensity: 0.7,
+    envMapIntensity: 0.65,
   },
 };
 
@@ -160,6 +162,8 @@ export function getTopStackWidth(txType: TxType): number {
 export interface FacadeTextureSet {
   map: THREE.CanvasTexture;
   emissiveMap: THREE.CanvasTexture;
+  /** Roughness noise (achromatic) — variasi kilap material per titik. */
+  roughnessMap: THREE.CanvasTexture;
 }
 
 const TILE_SIZE = 256;
@@ -184,7 +188,19 @@ function toTexture(canvas: HTMLCanvasElement, repeat: boolean): THREE.CanvasText
   return tex;
 }
 
-/** Jendela menyala: digambar ke albedo (kaca terang) + emissive (glow hangat). */
+/** Tekstur DATA non-warna (roughnessMap dsb) — linear (NoColorSpace default),
+ * bukan sRGB; roughnessMap dibaca channel G sebagai nilai roughness mentah. */
+function toDataTexture(canvas: HTMLCanvasElement): THREE.CanvasTexture {
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+/** Jendela menyala: digambar ke albedo (kaca terang) + emissive (glow hangat).
+ * Variasi "hidup" per jendela: ~22% redup (lampu tidur/servis), sisanya penuh;
+ * warna warm #ffd9a0-ish & cool #cfe8ff-ish campur deterministik (rnd seed). */
 function drawLitWindow(
   albedo: CanvasRenderingContext2D,
   emissive: CanvasRenderingContext2D,
@@ -194,17 +210,18 @@ function drawLitWindow(
   h: number,
   rnd: () => number,
 ): void {
-  const bright = 0.5 + rnd() * 0.5;
-  const warm = rnd() < 0.78;
+  const dim = rnd() < 0.22;
+  const bright = dim ? 0.16 + rnd() * 0.22 : 0.5 + rnd() * 0.5;
+  const warm = rnd() < 0.74;
   // Albedo — kaca menyala tampak terang meski emissive intensity rendah.
   albedo.fillStyle = warm
-    ? `rgba(255,214,150,${0.55 + bright * 0.3})`
-    : `rgba(205,220,255,${0.5 + bright * 0.3})`;
+    ? `rgba(255,217,160,${0.35 + bright * 0.4})`
+    : `rgba(207,232,255,${0.3 + bright * 0.4})`;
   albedo.fillRect(x, y, w, h);
-  // Emissive — hitam di area mati, hangat di area menyala (× warna bracket).
+  // Emissive — hitam di area mati, hangat/dingin di area menyala (× warna bracket).
   emissive.fillStyle = warm
-    ? `rgba(255,196,120,${bright})`
-    : `rgba(170,200,255,${bright * 0.8})`;
+    ? `rgba(255,200,128,${bright})`
+    : `rgba(176,208,255,${bright * 0.8})`;
   emissive.fillRect(x, y, w, h);
 }
 
@@ -310,7 +327,42 @@ function buildFacadeTextureSet(arch: FacadeArchetype, rnd: () => number): Facade
   return {
     map: toTexture(albedo.canvas, true),
     emissiveMap: toTexture(emissive.canvas, true),
+    roughnessMap: toDataTexture(buildRoughnessCanvas(arch, rnd)),
   };
+}
+
+/** Roughness noise (achromatic — SEKALI per arketipe, dipakai semua warna
+ * bracket karena sifatnya netral; material.roughness tetap jadi base yang
+ * dikalikan map). Kaca: halus berkilau dgn smudge tipis. Beton: kasar + streak
+ * cuapan vertikal khas fasad cuakan. */
+function buildRoughnessCanvas(arch: FacadeArchetype, rnd: () => number): HTMLCanvasElement {
+  const S = 128;
+  const { canvas, ctx } = makeCanvas(S);
+  // Base per arketipe (0-255 ≈ roughness 0-1 pasca-kali material.roughness).
+  const base = arch === "glass" ? 214 : arch === "concrete" ? 235 : 226;
+  ctx.fillStyle = `rgb(${base},${base},${base})`;
+  ctx.fillRect(0, 0, S, S);
+  // Grain material halus — roughness TIDAK seragam (AC material berlapis).
+  for (let i = 0; i < 900; i++) {
+    const v = base + Math.floor((rnd() * 2 - 1) * 14);
+    ctx.fillStyle = `rgba(${v},${v},${v},${0.25 + rnd() * 0.3})`;
+    ctx.fillRect(rnd() * S, rnd() * S, 1 + rnd() * 3, 1 + rnd() * 2);
+  }
+  if (arch === "concrete") {
+    // Streak cuapan vertikal (pola khas beton) — sangat halus.
+    for (let i = 0; i < 24; i++) {
+      ctx.fillStyle = `rgba(0,0,0,${0.03 + rnd() * 0.05})`;
+      ctx.fillRect(rnd() * S, rnd() * S, 1 + rnd() * 2, 20 + rnd() * 60);
+    }
+  } else {
+    // Kaca/setback: smudge perawatan acak, lembut dan jarang.
+    for (let i = 0; i < 10; i++) {
+      const v = base - 10 - Math.floor(rnd() * 12);
+      ctx.fillStyle = `rgba(${v},${v},${v},0.18)`;
+      ctx.fillRect(rnd() * S, rnd() * S, 8 + rnd() * 20, 4 + rnd() * 10);
+    }
+  }
+  return canvas;
 }
 
 /** Cache tekstur fasad — dibuat SEKALI per TxType (bukan per render). */
@@ -328,7 +380,8 @@ export function getFacadeTextures(txType: TxType): FacadeTextureSet {
 
 /* ==== 3. Geometri tower (merge stack, 1 draw call) ======================== */
 
-/** Gabung beberapa BoxGeometry (atribut identik) jadi satu BufferGeometry. */
+/** Gabung beberapa BoxGeometry (atribut identik) jadi satu BufferGeometry.
+ * Membawa atribut color (fake-AO vertikal) jika tersedia di semua part. */
 function mergeBoxGeometries(geometries: THREE.BoxGeometry[]): THREE.BufferGeometry {
   let vCount = 0;
   let iCount = 0;
@@ -339,6 +392,7 @@ function mergeBoxGeometries(geometries: THREE.BoxGeometry[]): THREE.BufferGeomet
   const positions = new Float32Array(vCount * 3);
   const normals = new Float32Array(vCount * 3);
   const uvs = new Float32Array(vCount * 2);
+  const colors = new Float32Array(vCount * 3);
   const indices = new Uint16Array(iCount);
   let vBase = 0;
   let iBase = 0;
@@ -349,6 +403,7 @@ function mergeBoxGeometries(geometries: THREE.BoxGeometry[]): THREE.BufferGeomet
     positions.set(pos.array as Float32Array, vBase * 3);
     normals.set(nor.array as Float32Array, vBase * 3);
     uvs.set(uv.array as Float32Array, vBase * 2);
+    colors.set(g.attributes.color.array as Float32Array, vBase * 3);
     for (let i = 0; i < g.index!.count; i++) {
       indices[iBase + i] = g.index!.getX(i) + vBase;
     }
@@ -359,11 +414,16 @@ function mergeBoxGeometries(geometries: THREE.BoxGeometry[]): THREE.BufferGeomet
   merged.setAttribute("position", new THREE.BufferAttribute(positions, 3));
   merged.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
   merged.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
+  merged.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   merged.setIndex(new THREE.BufferAttribute(indices, 1));
   return merged;
 }
 
 const towerGeometryCache = new Map<TxType, THREE.BufferGeometry>();
+
+/** Segmen vertikal per stack — vertex rows tambahan agar gradasi fake-AO
+ * (kaki gelap → atas terang) menyeur halus, bukan linear penuh 2-baris. */
+const TOWER_HEIGHT_SEGMENTS = 4;
 
 /**
  * Tower utuh (semua stack setback) sebagai SATU geometri, ruang lokal
@@ -372,6 +432,10 @@ const towerGeometryCache = new Map<TxType, THREE.BufferGeometry>();
  * (v = tinggi bangunan × K), mullion horizontal konsisten (u = lebar × K).
  * UV atap/dasar disembunyikan ke sample spandel (tidak terlihat — ditutup
  * cap atap / podium).
+ * Atribut color = fake-AO vertikal (Ethereal Glass): kaki gedung ~18% lebih
+ * gelap, smoothstep menghilang di ~42% tinggi — kesan contact-shadow tanpa
+ * garis keras. Sifatnya berdasar tinggi GLOBAL gedung (bukan per stack)
+ * sehingga menara setback tidak mengulang AO di tiap tier.
  */
 export function getTowerGeometry(txType: TxType): THREE.BufferGeometry {
   const cached = towerGeometryCache.get(txType);
@@ -380,15 +444,36 @@ export function getTowerGeometry(txType: TxType): THREE.BufferGeometry {
   const arch = getFacadeArchetype(txType);
   const def = ARCHETYPES[arch];
   const k = def.floorsTotal / def.tileRows; // tile vertikal per bangunan
+  const HS = TOWER_HEIGHT_SEGMENTS;
 
   const parts = def.stacks.map((s) => {
-    const g = new THREE.BoxGeometry(s.w, s.y1 - s.y0, s.w);
+    const h = s.y1 - s.y0;
+    const g = new THREE.BoxGeometry(s.w, h, s.w, 1, HS, 1);
     const uv = g.attributes.uv as THREE.BufferAttribute;
+    const pos = g.attributes.position as THREE.BufferAttribute;
+    // Dengan heightSegments=HS, jumlah vertex per face BoxGeometry:
+    // px & nx = (HS+1)×2, py & ny = 2×2 (top/bottom), pz & nz = (HS+1)×2.
+    const sideVerts = (HS + 1) * 2;
+    const capStart = sideVerts * 2; // awal face +y (atap)
+    const capEnd = capStart + 8; // + face -y (dasar)
     const uScale = s.w * k;
-    const vScale = (s.y1 - s.y0) * k;
+    const vScale = h * k;
     const vOffset = s.y0 * k;
+
+    // Warna vertex: ao = mix(0.82, 1.0, smoothstep(0.12, 0.42, gY)).
+    const colors = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i++) {
+      const gY = s.y0 + (pos.getY(i) + h / 2); // tinggi global unit-space [0,1]
+      const t = Math.min(Math.max((gY - 0.12) / 0.3, 0), 1);
+      const ao = 0.82 + 0.18 * (t * t * (3 - 2 * t));
+      colors[i * 3] = ao;
+      colors[i * 3 + 1] = ao;
+      colors[i * 3 + 2] = ao;
+    }
+    g.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+
     for (let i = 0; i < uv.count; i++) {
-      if (i >= 8 && i < 16) {
+      if (i >= capStart && i < capEnd) {
         // Vertex face +y/-y (atap & dasar) — sample spandel polos.
         uv.setXY(i, 0.05, 0.02);
         continue;
@@ -474,6 +559,9 @@ export function getPodiumTextures(): FacadeTextureSet {
   podiumTextureSet = {
     map: toTexture(albedo, false),
     emissiveMap: toTexture(emissiveCanvas, false),
+    // Batu podium: roughness noise arketipe concrete — dinding batu matte
+    // dengan variasi kilap halus (material berlapis, bukan flat).
+    roughnessMap: toDataTexture(buildRoughnessCanvas("concrete", mulberry32(777))),
   };
   return podiumTextureSet;
 }
@@ -488,6 +576,44 @@ export function getPodiumGeometry(): THREE.BoxGeometry {
   for (let i = 8; i < 16; i++) uv.setXY(i, 0.05, 0.05);
   podiumGeometry = g;
   return g;
+}
+
+/* ==== 4b. Cap atap / parapet — hairline light edge (Ethereal Glass) ======= */
+
+let roofCapGeometry: THREE.BoxGeometry | null = null;
+
+/** Box unit cap dengan UV atap/dasar diarahkan ke area GELAP tengah canvas
+ * emissive (0.5, 0.5) — deck atap tidak ikut menyala, hanya sisi parapet. */
+export function getRoofCapGeometry(): THREE.BoxGeometry {
+  if (roofCapGeometry) return roofCapGeometry;
+  const g = new THREE.BoxGeometry(1, 1, 1);
+  const uv = g.attributes.uv as THREE.BufferAttribute;
+  for (let i = 8; i < 16; i++) uv.setXY(i, 0.5, 0.5);
+  roofCapGeometry = g;
+  return g;
+}
+
+let roofEmissiveTexture: THREE.CanvasTexture | null = null;
+
+/** Emissive hairline parapet: garis 2px di tepi ATAS tiap sisi box (flipY →
+ * v≈0.97–1.0). Warna di-tint oleh material.emissive (currentColor per frame)
+ * dengan emissiveIntensity 0.22 — restrained, "cahaya lantai atap", bukan
+ * neon. Cached module-scope sekali untuk SELURUH kota. */
+export function getRoofEmissiveTexture(): THREE.CanvasTexture {
+  if (roofEmissiveTexture) return roofEmissiveTexture;
+  const W = 128;
+  const H = 64;
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas 2D tidak tersedia");
+  ctx.fillStyle = "#000000";
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = "rgba(255,240,214,0.95)";
+  ctx.fillRect(0, 0, W, 2);
+  roofEmissiveTexture = toTexture(canvas, true);
+  return roofEmissiveTexture;
 }
 
 /* ==== 5. Registry live-state + RooftopDetails (instancing global) ========= */
