@@ -3,7 +3,7 @@ import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { TxType } from '@/data/tx-classifier'
 import { useGasStore } from '@/store/gas-store'
-import { getBuildingPosition } from './layout'
+import { getBuildingPosition, CITY_SCALE, buildingHeight } from './layout'
 import { selectNewTxs } from './particle-spawn'
 
 const MAX_PARTICLES = 500
@@ -79,14 +79,18 @@ export function GasParticles() {
     }
     if (!inactive) return
 
+    // Tinggi gedung dari rumus SATU SUMBER buildingHeight() (layout.ts) —
+    // sama persis dengan GasBuilding → partikel selalu spawn ~0.5×CITY_SCALE
+    // (7.5 unit) DI ATAS atap untuk semua nilai avgGasUsed (jitter sebaran
+    // ×CITY_SCALE menutup footprint gedung baru; ukuran & kecepatan TETAP).
     const heightNorm = gasMetrics.get(txType)
-      ? Math.min((gasMetrics.get(txType)?.avgGasUsed || 100_000) / 300_000, 1) * 7.5 + 0.5
-      : 2
+      ? buildingHeight(gasMetrics.get(txType)?.avgGasUsed || 100_000)
+      : 2 * CITY_SCALE
 
     inactive.position.set(
-      buildingPos[0] + (Math.random() - 0.5) * 0.8,
-      heightNorm + 0.5,
-      buildingPos[2] + (Math.random() - 0.5) * 0.8
+      buildingPos[0] + (Math.random() - 0.5) * 0.8 * CITY_SCALE,
+      heightNorm + 0.5 * CITY_SCALE,
+      buildingPos[2] + (Math.random() - 0.5) * 0.8 * CITY_SCALE
     )
     inactive.velocity.set(
       (Math.random() - 0.5) * 0.5,

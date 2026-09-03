@@ -2,15 +2,23 @@ import { useEffect, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { useGasStore } from "@/store/gas-store";
-import { getBuildingPosition } from "./layout";
+import { CITY_SCALE, getBuildingPosition } from "./layout";
 
-const DEFAULT_CAMERA: readonly [number, number, number] = [15, 12, 15];
-const FOCUS_TARGET_Y = 1.2;
+// Semua jarak/offset kamera ×CITY_SCALE — posisi bangunan otomatis ikut
+// layout baru; konstanta inilah yang tadinya di-hardcode untuk kota kecil.
+// Di-export: dipakai App.tsx (posisi awal Canvas) & DataRiver (seed fresnel)
+// agar tidak ada angka kamera yang divergensi.
+export const DEFAULT_CAMERA: readonly [number, number, number] = [
+  15 * CITY_SCALE,
+  12 * CITY_SCALE,
+  15 * CITY_SCALE,
+];
+const FOCUS_TARGET_Y = 1.2 * CITY_SCALE;
 const LERP_TARGET = 0.07;
 const LERP_CAMERA = 0.06;
-const FOCUS_MIN_DIST = 5;
-const FOCUS_MAX_DIST = 9;
-const SETTLE_EPSILON = 0.3;
+const FOCUS_MIN_DIST = 5 * CITY_SCALE;
+const FOCUS_MAX_DIST = 9 * CITY_SCALE;
+const SETTLE_EPSILON = 0.3 * CITY_SCALE;
 
 type Phase = "idle" | "focus" | "return";
 

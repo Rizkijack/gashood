@@ -1,5 +1,6 @@
 import { useLayoutEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
+import { CITY_SCALE, RIVER_Z } from "./layout";
 
 /* ---------------------------------------------------------------------------
  * Vegetasi statis GasHood — rumput + pohon perimeter.
@@ -23,6 +24,17 @@ function mulberry32(seed: number): () => number {
 const TREE_COUNT = 52;
 const GRASS_COUNT = 1000;
 
+// Rescale ×CITY_SCALE: HANYA POSISI (ring perimeter, band rejection sungai,
+// square sidewalk) yang mengikuti skala kota. Ukuran mesh pohon/rumput TETAP
+// — pohon ~2–3 unit (≈ 10 m riil) sudah proporsional vs mobil yang tetap.
+const TREE_RING_MIN = 14.5 * CITY_SCALE;
+const TREE_RING_MAX = 19 * CITY_SCALE;
+const RIVER_BAND_HALF = 3.2 * CITY_SCALE; // tepi luar bank sungai + margin
+const RIVER_X_HALF = 18 * CITY_SCALE; // setengah panjang sungai
+const GRASS_RING_MIN = 12.5 * CITY_SCALE;
+const GRASS_RING_MAX = 19.5 * CITY_SCALE;
+const SIDEWALK_SQUARE = 13.5 * CITY_SCALE; // plaza + ring sidewalk + toleransi
+
 interface TreeSpec {
   x: number;
   z: number;
@@ -44,20 +56,21 @@ interface GrassSpec {
 // Palette rumput: 3 hijau bervariasi (setColorAt per instance).
 const GRASS_COLORS = ["#2f6b2f", "#3d7a3d", "#2a5c2a"].map((c) => new THREE.Color(c));
 
-/** Pohon ring perimeter: radius 14.5–19 (di luar plaza 13, sebelum tepi 20).
- * Pohon yang jatuh di jalur sungai (strip |z| < 3.2, sungai z=2 span air+bank
- * [1.09, 2.91] + margin) digeser ke tepian luar sungai (z = ±3.2–3.8). */
+/** Pohon ring perimeter (di luar sidewalk, sebelum tepi ground).
+ * Pohon yang jatuh di jalur sungai (band di sekitar RIVER_Z) digeser ke
+ * tepian luar band. */
 function generateTrees(): TreeSpec[] {
   const rnd = mulberry32(42);
   const trees: TreeSpec[] = [];
   for (let i = 0; i < TREE_COUNT; i++) {
     const angle = (i / TREE_COUNT) * Math.PI * 2 + (rnd() - 0.5) * 0.3;
-    const radius = 14.5 + rnd() * 4.5;
+    const radius = TREE_RING_MIN + rnd() * (TREE_RING_MAX - TREE_RING_MIN);
     let x = Math.cos(angle) * radius;
     let z = Math.sin(angle) * radius;
-    // Hindari tumbuh di atas air/bank sungai (z=2) — geser ke tepian luar.
-    if (Math.abs(z) < 3.2 && Math.abs(x) < 18) {
-      z = z < 0 ? -(3.2 + rnd() * 0.6) : 3.2 + rnd() * 0.6;
+    // Hindari tumbuh di atas air/bank sungai (z=RIVER_Z) — geser ke tepian luar.
+    if (Math.abs(z - RIVER_Z) < RIVER_BAND_HALF && Math.abs(x) < RIVER_X_HALF) {
+      const edge = RIVER_BAND_HALF + rnd() * 0.6 * CITY_SCALE;
+      z = z < RIVER_Z ? RIVER_Z - edge : RIVER_Z + edge;
     }
     trees.push({
       x,
@@ -70,24 +83,23 @@ function generateTrees(): TreeSpec[] {
   return trees;
 }
 
-/** Rumput: rejection sampling di ring 12.5–19.5. Urutan tolak:
- * 1) plaza (jarak < 12.5), 2) sungai (strip |z| < 3.2 dalam rentang x ±18),
- * 3) sidewalk/square kota (|x| ≤ 13.5 && |z| ≤ 13.5 — plaza 26×26 + ring
- * sidewalk ±13.25, plus toleransi 0.25) → rumput hanya di luar bangunan
- * dan tidak menembus sidewalk. */
+/** Rumput: rejection sampling di ring [GRASS_RING_MIN, GRASS_RING_MAX].
+ * Urutan tolak: 1) plaza (jarak < GRASS_RING_MIN), 2) sungai (band sekitar
+ * RIVER_Z), 3) sidewalk/square kota (|x|,|z| ≤ SIDEWALK_SQUARE) → rumput
+ * hanya di luar bangunan dan tidak menembus sidewalk. */
 function generateGrass(): GrassSpec[] {
   const rnd = mulberry32(1337);
   const blades: GrassSpec[] = [];
   let guard = 0;
   while (blades.length < GRASS_COUNT && guard < GRASS_COUNT * 40) {
     guard++;
-    const x = (rnd() * 2 - 1) * 19.5;
-    const z = (rnd() * 2 - 1) * 19.5;
+    const x = (rnd() * 2 - 1) * GRASS_RING_MAX;
+    const z = (rnd() * 2 - 1) * GRASS_RING_MAX;
     const dist = Math.hypot(x, z);
-    if (dist < 12.5) continue; // 1) plaza aspal
-    if (dist > 19.5) continue; // ring rumput
-    if (Math.abs(z) < 3.2 && Math.abs(x) < 18) continue; // 2) jalur sungai z=2
-    if (Math.abs(x) <= 13.5 && Math.abs(z) <= 13.5) continue; // 3) sidewalk kota
+    if (dist < GRASS_RING_MIN) continue; // 1) plaza aspal
+    if (dist > GRASS_RING_MAX) continue; // ring rumput
+    if (Math.abs(z - RIVER_Z) < RIVER_BAND_HALF && Math.abs(x) < RIVER_X_HALF) continue; // 2) jalur sungai
+    if (Math.abs(x) <= SIDEWALK_SQUARE && Math.abs(z) <= SIDEWALK_SQUARE) continue; // 3) sidewalk kota
     blades.push({
       x,
       z,

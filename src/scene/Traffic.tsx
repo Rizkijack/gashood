@@ -13,7 +13,8 @@ import {
 } from "./RoadNetwork";
 
 /* ---------------------------------------------------------------------------
- * Traffic — lalu-lalang mobil di ring avenue + jalan z=-2.
+ * Traffic — lalu-lalang mobil di ring avenue + jalan lurus ROAD_Z
+ * (-SPACING/2, mirror koridor sungai).
  *
  * Konsep: kota hidup mengikuti aktivitas jaringan — kecepatan mobil = BASE
  * dikali faktor TPS dari useGasStore (selector granular s.networkStats.tps),
@@ -24,7 +25,7 @@ import {
  * - SATU useFrame untuk SEMUA mobil; 0 alokasi per frame (dummy Object3D +
  *   objek pose di-reuse, setMatrixAt in-place).
  * - Posisi parametrik: keliling persegi ring (linear per segmen) + jalan
- *   lurus z=-2; wrap-around muncul di persimpangan (terbaca sebagai belok).
+ *   lurus ROAD_Z; wrap-around muncul di persimpangan (terbaca sebagai belok).
  * - Roda & lampu mobil di-skip (skala terlalu kecil / langit dinamis).
  * ------------------------------------------------------------------------- */
 
@@ -40,10 +41,11 @@ function mulberry32(seed: number): () => number {
 }
 
 const RING_CARS_PER_DIR = 20; // ×2 arah = 40 mobil ring
-const ROAD_CARS_PER_DIR = 4; // ×2 arah = 8 mobil jalan z=-2
+const ROAD_CARS_PER_DIR = 4; // ×2 arah = 8 mobil jalan lurus ROAD_Z
 const TOTAL_CARS = RING_CARS_PER_DIR * 2 + ROAD_CARS_PER_DIR * 2; // 48
 
-const BASE_SPEED = 2.2; // unit/s pada faktor 1.0x — keliling ring ±35 dtk
+const BASE_SPEED = 2.2; // unit/s pada faktor 1.0x — TETAP (≈36 km/jam riil,
+// realistis terhadap mobil); keliling ring baru (×CITY_SCALE) ±531 dtk
 const ROAD_SURFACE_Y = 0.02;
 const MAX_DELTA = 0.1; // guard lompatan saat tab di-background
 
@@ -54,7 +56,7 @@ const CIVILIAN_COLORS = ["#b8434a", "#4a6fb8", "#d8d8d8", "#3c414c", "#4f7a58", 
 const TAXI_COLOR = new THREE.Color("#e3c23c");
 
 interface CarSpec {
-  path: 0 | 1; // 0 = ring avenue, 1 = jalan z=-2
+  path: 0 | 1; // 0 = ring avenue, 1 = jalan lurus ROAD_Z
   dir: 1 | -1; // arah keliling / lintasan
   s0: number; // offset awal sepanjang path
   scale: number; // variasi ukuran 0.9–1.1
@@ -109,12 +111,13 @@ function ringPose(sRaw: number, dir: 1 | -1, out: Pose): void {
   out.x = x;
   out.z = z;
   out.angle = Math.atan2(hx, hz);
-  // Lift jembatan hanya di sisi vertikal (melintang sungai z=2).
+  // Lift jembatan hanya di sisi vertikal (melintang sungai RIVER_Z).
   out.lift = seg === 0 || seg === 2 ? bridgeHeightAt(z) : 0;
 }
 
-/** Pose jalan lurus z=-2 (x ∈ [-9.75, 9.75]) — ujung path tepat di persimpangan
- * ring, sehingga wrap-around terbaca sebagai mobil berbelok, bukan pop. */
+/** Pose jalan lurus ROAD_Z (x ∈ [-ROAD_HALF_LEN, ROAD_HALF_LEN]) — ujung
+ * path tepat di persimpangan ring, sehingga wrap-around terbaca sebagai
+ * mobil berbelok, bukan pop. */
 function roadPose(sRaw: number, dir: 1 | -1, out: Pose): void {
   let s = sRaw % ROAD_PATH_LEN;
   if (s < 0) s += ROAD_PATH_LEN;

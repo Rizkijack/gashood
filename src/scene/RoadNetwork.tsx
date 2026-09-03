@@ -7,15 +7,16 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
  *
  * Struktur (semua statis, dihitung SEKALI di useMemo — tanpa per-frame work):
  * 1. Ring avenue: persegi keliling di x,z = ±RING_H (lebar 1.6, 2 lajur),
- *    mengelilingi cluster bangunan (tepi bangunan ~7.4) di dalam sidewalk
- *    ring (13.0). 4 strip digabung (mergeGeometries) → 1 draw call, tekstur
+ *    mengelilingi cluster bangunan (tepi bangunan ±105) di dalam sidewalk
+ *    ring (±195). Posisi ×CITY_SCALE; lebar jalan & lajur TETAP (skala
+ *    mobil). 4 strip digabung (mergeGeometries) → 1 draw call, tekstur
  *    aspal noise dari canvas.
  * 2. Marka jalan: garis tepi solid + garis tengah putus-putus via canvas
  *    texture transparan (repeat sepanjang jalan, UV di-scale per strip).
  *    Semua marka digabung → 1 draw call.
  * 3. Zebra cross: 4 buah (1 per sisi ring), digabung → 1 draw call.
- * 4. Jembatan: ring melintasi sungai DataRiver (air z ∈ [1.31, 2.69], bank
- *    [1.09, 2.91]) di x = ±RING_H → 2 dek beton + pagar, digabung → 1 dc.
+ * 4. Jembatan: ring melintasi sungai DataRiver di x = ±RING_H → dek SEGMEN
+ *    (12 segmen/sisi mengikuti ramp bridgeHeightAt) + pagar, digabung → 1 dc.
  * 5. Lampu jalan: 12 tiang + kepala (vertex color, 1 material) dalam SATU
  *    InstancedMesh → 1 draw call. Matriks di-set sekali saat mount.
  *
@@ -23,26 +24,40 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
  * tidak ada drift antara geometri jalan dan posisi mobil.
  * ------------------------------------------------------------------------- */
 
-/** Half-size ring avenue (centerline) — antara tepi bangunan (~7.4) & sidewalk (13.0). */
-export const RING_H = 9.75;
+import { SPACING, CITY_SCALE, RIVER_Z } from "./layout";
+
+/** Half-size ring avenue (centerline) — antara tepi bangunan (±105) &
+ * sidewalk (±195). POSISI ×CITY_SCALE; lebar jalan tetap skala mobil. */
+export const RING_H = 9.75 * CITY_SCALE;
 /** Keliling path ring (4 sisi × 2×RING_H) — domain parametrik mobil. */
 export const RING_PERIMETER = 8 * RING_H;
-/** Offset lajur dari centerline (lebar jalan 1.6 → 2 lajur @ ±0.4). */
+/** Offset lajur dari centerline (lebar jalan 1.6 → 2 lajur @ ±0.4) — TETAP. */
 export const LANE_OFFSET = 0.4;
-/** Koridor jalan z=-2 milik World (strip 26×1.6) — domain mobil lurus. */
-export const ROAD_Z = -2;
-export const ROAD_HALF_LEN = RING_H; // x ∈ [-9.75, 9.75], ujung = persimpangan ring
+/** Koridor jalan z=-SPACING/2 milik World (mirror koridor sungai) — domain
+ * mobil lurus. */
+export const ROAD_Z = -SPACING / 2;
+export const ROAD_HALF_LEN = RING_H; // x ∈ [-RING_H, RING_H], ujung = persimpangan ring
 export const ROAD_PATH_LEN = 2 * ROAD_HALF_LEN;
-/** Tinggi dek jembatan (di atas bank 0.15 + toleransi roda-bayangan). */
-export const BRIDGE_HEIGHT = 0.17;
+/** Lift puncak jembatan ×CITY_SCALE — menaiki bank sungai yang kini 2.25
+ * (0.15×CITY_SCALE). Konsumen (Traffic) menaikkan mobil sebesar
+ * bridgeHeightAt(z); top dek segmen = lift(z) + 0.07 sehingga bawah bodi
+ * mobil (lift + 0.07) menumpang persis di permukaan dek — termasuk di
+ * puncak (top dek = BRIDGE_HEIGHT + 0.07). */
+export const BRIDGE_HEIGHT = 0.17 * CITY_SCALE;
 
-/** Zona jembatan: z ∈ [0.5, 3.5], penuh di [1.5, 2.5], smoothstep ramp 1.0. */
+/** Zona jembatan ×CITY_SCALE (profesi lama digandakan): ramp z ∈
+ * [RIVER_Z−22.5, RIVER_Z+22.5], penuh di [RIVER_Z−7.5, RIVER_Z+7.5],
+ * smoothstep ramp selebar 15. */
+const BRIDGE_ZONE_HALF = 1.5 * CITY_SCALE;
+const BRIDGE_FULL_HALF = 0.5 * CITY_SCALE;
+const BRIDGE_RAMP = 1.0 * CITY_SCALE;
 export function bridgeHeightAt(z: number): number {
-  if (z < 0.5 || z > 3.5) return 0;
+  if (z < RIVER_Z - BRIDGE_ZONE_HALF || z > RIVER_Z + BRIDGE_ZONE_HALF) return 0;
   const smooth = (u: number) => u * u * (3 - 2 * u);
-  if (z < 1.5) return BRIDGE_HEIGHT * smooth(z - 0.5);
-  if (z <= 2.5) return BRIDGE_HEIGHT;
-  return BRIDGE_HEIGHT * smooth(3.5 - z);
+  if (z < RIVER_Z - BRIDGE_FULL_HALF)
+    return BRIDGE_HEIGHT * smooth((z - (RIVER_Z - BRIDGE_ZONE_HALF)) / BRIDGE_RAMP);
+  if (z <= RIVER_Z + BRIDGE_FULL_HALF) return BRIDGE_HEIGHT;
+  return BRIDGE_HEIGHT * smooth((RIVER_Z + BRIDGE_ZONE_HALF - z) / BRIDGE_RAMP);
 }
 
 /* ---- Tekstur canvas (dibuat sekali per mount, di-cache useMemo) ---------- */
@@ -138,20 +153,6 @@ function flatStrip(
   return g;
 }
 
-/** Box + translate — util untuk jembatan. */
-function boxAt(
-  w: number,
-  h: number,
-  d: number,
-  x: number,
-  y: number,
-  z: number,
-): THREE.BoxGeometry {
-  const g = new THREE.BoxGeometry(w, h, d);
-  g.translate(x, y, z);
-  return g;
-}
-
 /** Isi attribute `color` per-vertex (untuk lampu: tiang vs kepala beda warna
  * dalam SATU material vertexColors). */
 function withColor(geo: THREE.BufferGeometry, hex: string): THREE.BufferGeometry {
@@ -169,14 +170,24 @@ function withColor(geo: THREE.BufferGeometry, hex: string): THREE.BufferGeometry
 
 /* ---- Konstanta layout ----------------------------------------------------- */
 
-const ROAD_WIDTH = 1.6;
-const RING_STRIP_LEN = 2 * RING_H + ROAD_WIDTH; // 21.1 — stripan menutup sudut
-const MARKING_Y = 0.011;
-const CROSSWALK_Y = 0.0125;
-const DASH_CYCLE = 4; // 1 tile marka = 4 unit jalan
+const ROAD_WIDTH = 1.6; // TETAP — lebar jalan skala mobil (~5.5 m riil)
+const RING_STRIP_LEN = 2 * RING_H + ROAD_WIDTH; // stripan menutup sudut
+/* Offset-y lapisan jalan ×CITY_SCALE — alasan sama dengan World.tsx
+ * (offset mikrometer z-fight di depth 24-bit jarak kota). Urutan di atas
+ * plaza World (0.075) & jalan World (0.12):
+ *   aspal ring vertikal(0.09) < horizontal(0.108) < marka(0.165) < zebra(0.1875) */
+const ASPHALT_Y_V = 0.006 * CITY_SCALE; // 0.09
+const ASPHALT_Y_H = 0.0072 * CITY_SCALE; // 0.108
+const MARKING_Y = 0.011 * CITY_SCALE; // 0.165
+const CROSSWALK_Y = 0.0125 * CITY_SCALE; // 0.1875
+const DASH_CYCLE = 4; // TETAP — 1 tile marka = 4 unit jalan (skala mobil)
 
-// Vertikal side skip persimpangan z=-2 (jalan World, z ∈ [-2.9, -1.1]):
-// marka terputus di persimpangan — realistik, tetap 1 draw call (merged).
+// Vertikal side skip persimpangan ROAD_Z (jalan World selebar 1.6 + margin
+// 0.1 — ukuran skala-jalan, TETAP): marka terputus di persimpangan —
+// realistik, tetap 1 draw call (merged). Segmen diturunkan dari RING_H &
+// ROAD_Z agar otomatis mengikuti CITY_SCALE.
+const INTER_HALF = ROAD_WIDTH / 2 + 0.1;
+const SIDE_END = RING_H + ROAD_WIDTH / 2; // ujung strip vertikal (menutup sudut)
 const MARKING_SEGMENTS: {
   x: number;
   z: number;
@@ -184,14 +195,26 @@ const MARKING_SEGMENTS: {
   horizontal: boolean;
 }[] = [];
 for (const sx of [-1, 1]) {
-  MARKING_SEGMENTS.push({ x: sx * RING_H, z: -6.725, len: 7.65, horizontal: false });
-  MARKING_SEGMENTS.push({ x: sx * RING_H, z: 4.725, len: 11.65, horizontal: false });
+  // Segmen sisi vertikal di bawah persimpangan (ujung ring → tepi koridor).
+  MARKING_SEGMENTS.push({
+    x: sx * RING_H,
+    z: (ROAD_Z - INTER_HALF - SIDE_END) / 2,
+    len: ROAD_Z - INTER_HALF + SIDE_END,
+    horizontal: false,
+  });
+  // Segmen di atas persimpangan (tepi koridor lain → ujung ring).
+  MARKING_SEGMENTS.push({
+    x: sx * RING_H,
+    z: (SIDE_END + ROAD_Z + INTER_HALF) / 2,
+    len: SIDE_END - (ROAD_Z + INTER_HALF),
+    horizontal: false,
+  });
 }
 for (const sz of [-1, 1]) {
   MARKING_SEGMENTS.push({ x: 0, z: sz * RING_H, len: RING_STRIP_LEN, horizontal: true });
 }
 
-// Zebra cross: 1 per sisi ring (titik tengah sisi, menghindari persimpangan z=-2).
+// Zebra cross: 1 per sisi ring (titik tengah sisi, menghindari persimpangan).
 const CROSSWALKS: { x: number; z: number; horizontal: boolean }[] = [
   { x: RING_H, z: 0, horizontal: false },
   { x: -RING_H, z: 0, horizontal: false },
@@ -199,12 +222,14 @@ const CROSSWALKS: { x: number; z: number; horizontal: boolean }[] = [
   { x: 0, z: -RING_H, horizontal: true },
 ];
 
-// Lampu jalan: 3 per sisi ring, di tepi luar (offset 1.2 dari centerline).
+// Lampu jalan: 3 per sisi ring, di tepi luar. Offset 1.2 dari centerline
+// TETAP (skala pejalan kaki, ~4 m riil); titik t = ±RING_H/2 (kuartal sisi).
+const LAMP_ROAD_OFFSET = 1.2;
 const LAMP_POSITIONS: [number, number][] = [];
 for (const sx of [-1, 1])
-  for (const t of [-4.875, 0, 4.875]) LAMP_POSITIONS.push([sx * (RING_H + 1.2), t]);
+  for (const t of [-RING_H / 2, 0, RING_H / 2]) LAMP_POSITIONS.push([sx * (RING_H + LAMP_ROAD_OFFSET), t]);
 for (const sz of [-1, 1])
-  for (const t of [-4.875, 0, 4.875]) LAMP_POSITIONS.push([t, sz * (RING_H + 1.2)]);
+  for (const t of [-RING_H / 2, 0, RING_H / 2]) LAMP_POSITIONS.push([t, sz * (RING_H + LAMP_ROAD_OFFSET)]);
 
 export function RoadNetwork() {
   const lampRef = useRef<THREE.InstancedMesh>(null);
@@ -246,11 +271,11 @@ export function RoadNetwork() {
     const asphaltParts: THREE.BufferGeometry[] = [];
     for (const sx of [-1, 1])
       asphaltParts.push(
-        flatStrip(ROAD_WIDTH, RING_STRIP_LEN, sx * RING_H, 0, 0.006, false, vScale),
+        flatStrip(ROAD_WIDTH, RING_STRIP_LEN, sx * RING_H, 0, ASPHALT_Y_V, false, vScale),
       );
     for (const sz of [-1, 1])
       asphaltParts.push(
-        flatStrip(ROAD_WIDTH, RING_STRIP_LEN, 0, sz * RING_H, 0.0072, true, vScale),
+        flatStrip(ROAD_WIDTH, RING_STRIP_LEN, 0, sz * RING_H, ASPHALT_Y_H, true, vScale),
       );
     const asphalt = mergeGeometries(asphaltParts, false)!;
     asphaltParts.forEach((g) => g.dispose());
@@ -267,12 +292,57 @@ export function RoadNetwork() {
     const crosswalk = mergeGeometries(crossParts, false)!;
     crossParts.forEach((g) => g.dispose());
 
-    // Jembatan: dek + 2 pagar per sisi (x = ±RING_H, melintang sungai z=2).
+    // Jembatan: dek SEGMEN MIRING mengikuti bridgeHeightAt (bukan box flat) —
+    // mobil (Traffic, lift = bridgeHeightAt) menumpang tepat di permukaan dek
+    // di SELURUH ramp, dan slab tidak mengiris air/bank sungai. Bentang dek =
+    // zona ramp PENUH (2×BRIDGE_ZONE_HALF = 45, z ∈ [RIVER_Z−22.5, RIVER_Z+
+    // 22.5]) → 15 segmen × 3 unit; boundary segmen jatuh PERSIS di tepi ramp
+    // (z=7.5/52.5, lift=0) → top dek di tepi = 0.07 = bawah bodi mobil darat.
+    // Tiap segmen = box di-rotateX sehingga top-nya menghubungkan lift(z0)→
+    // lift(z1) (chord) → permukaan piecewise-linear PERSIS kontinu di setiap
+    // joint, digabung → 1 draw call. Lebar dek (2.2, mengikuti jalan 1.6) &
+    // pagar (0.06×0.12) TETAP — skala mobil.
+    //
+    // Top segmen = lift(z) + DECK_CONTACT: DECK_CONTACT = ROAD_SURFACE_Y
+    // (0.02, Traffic) + offset bawah-bodi mobil (0.05) → bawah bodi mobil
+    // PERSIS menyentuh top dek di setiap z (di puncak → top dek =
+    // BRIDGE_HEIGHT + 0.07). Pagar ikut mengikuti kemiringan segmen.
+    const DECK_SEGMENTS = 15;
+    const DECK_SPAN = 2 * BRIDGE_ZONE_HALF; // 45 — tepat zona ramp jembatan
+    const DECK_SEG_LEN = DECK_SPAN / DECK_SEGMENTS; // 3
+    const DECK_THICK = 0.3;
+    const DECK_CONTACT = 0.07;
+    const DECK_Z0 = RIVER_Z - BRIDGE_ZONE_HALF;
     const bridgeParts: THREE.BufferGeometry[] = [];
     for (const sx of [-1, 1]) {
-      bridgeParts.push(boxAt(2.2, 0.18, 3.2, sx * RING_H, 0.07, 2));
-      bridgeParts.push(boxAt(0.06, 0.12, 3.2, sx * RING_H - 1.07, 0.22, 2));
-      bridgeParts.push(boxAt(0.06, 0.12, 3.2, sx * RING_H + 1.07, 0.22, 2));
+      for (let i = 0; i < DECK_SEGMENTS; i++) {
+        const z0 = DECK_Z0 + i * DECK_SEG_LEN;
+        const z1 = z0 + DECK_SEG_LEN;
+        const zc = (z0 + z1) / 2;
+        // Chord antara lift ujung-ujung → top dek kontinu antar segmen.
+        const y0 = bridgeHeightAt(z0) + DECK_CONTACT;
+        const y1 = bridgeHeightAt(z1) + DECK_CONTACT;
+        const topMid = (y0 + y1) / 2;
+        const angle = Math.atan((y1 - y0) / DECK_SEG_LEN);
+        // Panjang box dikoreksi 1/cos agar proyeksi horizontal = DECK_SEG_LEN
+        // (ujung segmen tepat bertemu di z0/z1 — tanpa celah).
+        const segLen = DECK_SEG_LEN / Math.cos(angle);
+        bridgeParts.push(
+          new THREE.BoxGeometry(2.2, DECK_THICK, segLen)
+            .rotateX(-angle)
+            .translate(sx * RING_H, topMid - DECK_THICK / 2, zc),
+        );
+        bridgeParts.push(
+          new THREE.BoxGeometry(0.06, 0.12, segLen)
+            .rotateX(-angle)
+            .translate(sx * RING_H - 1.07, topMid + 0.06, zc),
+        );
+        bridgeParts.push(
+          new THREE.BoxGeometry(0.06, 0.12, segLen)
+            .rotateX(-angle)
+            .translate(sx * RING_H + 1.07, topMid + 0.06, zc),
+        );
+      }
     }
     const bridge = mergeGeometries(bridgeParts, false)!;
     bridgeParts.forEach((g) => g.dispose());

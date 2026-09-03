@@ -2,6 +2,7 @@ import { useRef, useMemo } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useGasStore } from '@/store/gas-store'
+import { CITY_SCALE } from './layout'
 
 const SKY_STATES = [
   { utilization: 0,    top: new THREE.Color('#1a3a5c'), bottom: new THREE.Color('#87CEEB') },
@@ -114,7 +115,9 @@ export function SkyDome() {
 
   return (
     <mesh>
-      <sphereGeometry args={[50, 32, 16]} />
+      {/* Radius ×CITY_SCALE (750) — harus memayungi ground 600×600 dan berada
+          di luar fog far (750) agar horizon menyatu dengan kabut. */}
+      <sphereGeometry args={[50 * CITY_SCALE, 32, 16]} />
       <shaderMaterial
         ref={matRef}
         vertexShader={vertexShader}

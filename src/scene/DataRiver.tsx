@@ -2,18 +2,23 @@ import { useRef, useMemo } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useGasStore } from '@/store/gas-store'
+import { CITY_SCALE, RIVER_Z } from './layout'
+import { DEFAULT_CAMERA } from './CameraFocus'
 
-/** L10 (security/robustness): nilai uniform harus finite — data upstream
- * (RPC/store) bisa berupa NaN/Infinity dan meracuni shader. */
 function safe(value: number, fallback: number): number {
   return Number.isFinite(value) ? value : fallback
 }
 
 const vertexShader = `
   varying vec2 vUv;
+  varying vec3 vWorldPos;
+  varying vec3 vNormal;
   void main() {
     vUv = uv;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    vec4 worldPos = modelMatrix * vec4(position, 1.0);
+    vWorldPos = worldPos.xyz;
+    vNormal = normalize(normalMatrix * normal);
+    gl_Position = projectionMatrix * viewMatrix * worldPos;
   }
 `
 
@@ -22,9 +27,12 @@ const fragmentShader = `
   uniform float uOffset;
   uniform vec3 uColor;
   uniform float uIntensity;
+  uniform vec3 uCameraPos;
   varying vec2 vUv;
+  varying vec3 vWorldPos;
+  varying vec3 vNormal;
 
-  // Simplex-like noise
+  // ── Noise functions ──────────────────────────────────────────────
   vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
   vec2 mod289(vec2 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
   vec3 permute(vec3 x) { return mod289(((x*34.0)+1.0)*x); }
@@ -54,36 +62,93 @@ const fragmentShader = `
     return 130.0 * dot(m, g);
   }
 
+  // FBM (fractal brownian motion) — 4 octaves untuk detail air
+  float fbm(vec2 p) {
+    float f = 0.0;
+    float amp = 0.5;
+    for (int i = 0; i < 4; i++) {
+      f += amp * snoise(p);
+      p *= 2.0;
+      amp *= 0.5;
+    }
+    return f;
+  }
+
   void main() {
     vec2 uv = vUv;
-    // L19 (kontrak dipertahankan): scrolling pakai uOffset terintegrasi di CPU
-    // (useFrame), bukan uTime * uSpeed — perubahan kecepatan tidak menggeser
-    // pola secara retroaktif. uTime tetap untuk evolusi noise.
-    uv.x += uOffset;
 
-    float n1 = snoise(uv * 3.0 + uTime * 0.05) * 0.5 + 0.5;
-    float n2 = snoise(uv * 6.0 + 100.0 + uTime * 0.05) * 0.5 + 0.5;
-    float noise = n1 * 0.7 + n2 * 0.3;
+    // ── 1. Current flow — lambat, organik ──────────────────────────
+    // Base flow: arus utama ke kanan (dx)
+    float flowX = uOffset * 0.12;
 
-    float edgeFade = smoothstep(0.0, 0.15, vUv.y) * smoothstep(1.0, 0.85, vUv.y);
+    // Lateral drift: arus menyamping halus (dy sinusoidal)
+    float driftY = sin(uv.x * 2.5 + uTime * 0.15) * 0.03;
 
-    // Gelombang halus: displacement kecil di fragment lewat modulasi noise
-    // (bukan vertex) — tetap murah.
-    float wave = n1 * 0.05;
+    // Vortex kecil: area eddy statis di beberapa titik
+    float vortex1 = sin(uv.x * 4.0 + 1.3) * cos(uv.y * 3.0 + 0.7) * 0.02;
+    float vortex2 = cos(uv.x * 6.0 + 2.1) * sin(uv.y * 5.0 + 1.9) * 0.015;
 
-    // Kilau/spekular air: highlight pada noise bernilai tinggi + shimmer halus
-    // (AC: solid, bukan neon — dibatasi uIntensity & di-clamp).
-    float specular = smoothstep(0.55, 0.9, noise) * uIntensity * 0.4;
-    float shimmer = sin(uv.x * 40.0 + uTime * 2.0) * 0.02;
+    vec2 flowUV = uv + vec2(flowX, driftY + vortex1 + vortex2);
 
-    // Warna air dari gas price (r,g) — BUKAN full additive: dipakai sebagai
-    // warna dasar + bias kebiruan agar terlihat seperti air.
-    vec3 base = uColor * 0.55 + vec3(0.02, 0.05, 0.12);
+    // ── 2. Multi-layer noise untuk permukaan air ──────────────────
+    // Layer 1: gelombang besar (arus utama)
+    float wave1 = fbm(flowUV * 2.0 + uTime * 0.02) * 0.5 + 0.5;
 
-    vec3 finalColor = min(base + vec3(specular + shimmer + wave), vec3(1.0));
+    // Layer 2: riak kecil (detail permukaan)
+    float ripple = snoise(flowUV * 8.0 + uTime * 0.08) * 0.5 + 0.5;
 
-    // Alpha ~0.85 → riverbed di bawahnya ikut terlihat (kesan "dalam").
-    float alpha = 0.85 * edgeFade;
+    // Layer 3: kilau kasatmata (specular highlight)
+    float sparkle = snoise(flowUV * 16.0 + uTime * 0.3) * 0.5 + 0.5;
+
+    // Gabungkan: wave dominan, ripple sebagai detail, sparkle sebagai highlight
+    float surface = wave1 * 0.6 + ripple * 0.25 + sparkle * 0.15;
+
+    // ── 3. Edge effect — air lebih gelap di tepi (depth cue) ──────
+    float edgeDist = min(vUv.y, 1.0 - vUv.y);
+    float edgeDarken = smoothstep(0.0, 0.2, edgeDist);
+    float edgeHighlight = smoothstep(0.0, 0.08, edgeDist);
+
+    // ── 4. Warna air realistis ────────────────────────────────────
+    // Base: deep water blue-green
+    vec3 deepWater = vec3(0.02, 0.06, 0.12);
+    vec3 shallowWater = vec3(0.04, 0.12, 0.18);
+    vec3 surfaceHighlight = vec3(0.15, 0.25, 0.30);
+
+    // Mix berdasarkan depth (edge = deep, center = shallow)
+    vec3 waterBase = mix(deepWater, shallowWater, edgeDarken);
+
+    // Tambah warna dari gas price (subtle tint)
+    vec3 gasTint = uColor * 0.15;
+    waterBase += gasTint;
+
+    // ── 5. Specular & caustics ────────────────────────────────────
+    // Specular: highlight pada area surface yang tinggi
+    float specular = smoothstep(0.6, 0.85, surface) * uIntensity * 0.5;
+
+    // Caustics: pola cahaya yang terpantul di dasar
+    float caustics = smoothstep(0.55, 0.75, ripple) * 0.15 * edgeDarken;
+
+    // Shimmer: kilau halus bergerak cepat
+    float shimmer = sin(flowUV.x * 30.0 + uTime * 1.5) * 0.015;
+    shimmer *= smoothstep(0.3, 0.7, vUv.y); // hanya di tengah
+
+    // ── 6. Fresnel-like rim light ─────────────────────────────────
+    float fresnel = pow(1.0 - max(dot(vNormal, normalize(uCameraPos - vWorldPos)), 0.0), 3.0);
+    fresnel = clamp(fresnel, 0.0, 0.4) * edgeHighlight;
+
+    // ── 7. Final compositing ──────────────────────────────────────
+    vec3 finalColor = waterBase;
+    finalColor += vec3(specular + caustics + shimmer + fresnel);
+
+    // Desaturasi sedikit agar tidak terlalu saturated
+    float luma = dot(finalColor, vec3(0.299, 0.587, 0.114));
+    finalColor = mix(vec3(luma), finalColor, 0.85);
+
+    // Clamp agar tidak blow out
+    finalColor = min(finalColor, vec3(0.45));
+
+    // Alpha: lebih transparan di tengah, lebih opaque di tepi
+    float alpha = mix(0.7, 0.92, edgeDarken) * uIntensity * 0.9 + 0.1;
 
     gl_FragColor = vec4(finalColor, alpha);
   }
@@ -92,14 +157,10 @@ const fragmentShader = `
 export function DataRiver() {
   const matRef = useRef<THREE.ShaderMaterial>(null)
   const networkStats = useGasStore((s) => s.networkStats)
+  const cameraRef = useRef(new THREE.Vector3(...DEFAULT_CAMERA))
 
-  // L19: offset diintegrasikan di CPU — kecepatan berubah TIDAK melompatkan
-  // pola karena offset terakumulasi secara kontinu (delta dari clock).
   const offsetRef = useRef(0)
 
-  // L8 (GC): totalTxs dihitung di selector zustand — hanya recompute saat
-  // state store berubah (~tiap polling), BUKAN tiap frame, dan tanpa
-  // alokasi `Array.from(gasMetrics.values())` per frame.
   const totalTxs = useGasStore((s) => {
     let sum = 0
     for (const m of s.gasMetrics.values()) sum += m.recentTxCount
@@ -112,12 +173,11 @@ export function DataRiver() {
       uOffset: { value: 0 },
       uColor: { value: new THREE.Color('#44CC66') },
       uIntensity: { value: 0.5 },
+      uCameraPos: { value: new THREE.Vector3(...DEFAULT_CAMERA) },
     }),
     []
   )
 
-  // Kontrak useFrame dipertahankan: hanya update uniform uTime/uOffset/
-  // uColor/uIntensity — TIDAK menyentuh store baru, tanpa alokasi per frame.
   useFrame((state, delta) => {
     if (!matRef.current) return
 
@@ -125,59 +185,49 @@ export function DataRiver() {
     const avgGasPrice = safe(networkStats.currentGasPrice, 0)
     const total = safe(totalTxs, 0)
 
-    // L19: integrasi offset di CPU (delta dari clock frame ini).
-    const speed = safe(Math.min(tps / 10, 3) + 0.5, 0.5)
+    // Kecepatan arus: LAMBAT — base 0.3, max ~1.5 pada TPS tinggi
+    // Sebelumnya: Math.min(tps / 10, 3) + 0.5 → bisa 3.5
+    // Sekarang: Math.min(tps / 30, 1.0) + 0.3 → max 1.3
+    const speed = safe(Math.min(tps / 30, 1.0) + 0.3, 0.3) * CITY_SCALE
     offsetRef.current += speed * delta
+
+    // Update camera position untuk fresnel
+    cameraRef.current.copy(state.camera.position)
 
     matRef.current.uniforms.uTime.value = safe(state.clock.elapsedTime, 0)
     matRef.current.uniforms.uOffset.value = safe(offsetRef.current, 0)
+    matRef.current.uniforms.uCameraPos.value.copy(cameraRef.current)
 
-    const r = Math.min(avgGasPrice / 0.5, 1)
-    const g = 1 - Math.min(avgGasPrice / 0.5, 1) * 0.5
-    matRef.current.uniforms.uColor.value.setRGB(r * 0.8 + 0.2, g * 0.8 + 0.1, 0.3)
+    // Warna air: lebih kebiruan, gas price sebagai subtle tint
+    const r = Math.min(avgGasPrice / 0.5, 1) * 0.15 + 0.02
+    const g = Math.min(avgGasPrice / 0.5, 1) * 0.08 + 0.08
+    const b = 0.15 + Math.min(avgGasPrice / 0.5, 1) * 0.05
+    matRef.current.uniforms.uColor.value.setRGB(r, g, b)
 
-    matRef.current.uniforms.uIntensity.value = Math.min(total / 100, 1) * 0.8 + 0.2
+    matRef.current.uniforms.uIntensity.value = Math.min(total / 100, 1) * 0.6 + 0.4
   })
 
   return (
     <group>
-      {/*
-        SUNGAI 3 lapis (AC rekonstruksi): dasar riverbed gelap → tepian kiri/
-        kanan → permukaan air transparan di atasnya. Semua geometry dibuat
-        sekali; kontrak tambahan: sungai utama di z=2 (koridor antara baris
-        bangunan z=0 dan z=4 — "sungai data mengalir di tengah kota").
-
-        Geometri presisi (clearance ≥ 0.15):
-        - radius efektif plinth max = (2.0/2) × 1.05(pulse) × 1.05(hover)
-          × 1.05(plinth) = 1.1576 ≈ 1.158 → koridor bebas z ∈ [1.158, 2.842].
-        - safety 0.15 → AIR z ∈ [1.31, 2.69], lebar 1.38 (clearance 0.152).
-        - BANK tipis 0.22 mengapit: z ∈ [1.09, 1.31] & [2.69, 2.91].
-        - RIVERBED sedikit lebih lebar dari air: z ∈ [1.10, 2.90] (lebar 1.8).
-        - Y: riverbed 0.01 / air 0.06 / bank box 0–0.15 (center 0.075).
-        Panjang plane tetap 36 (membentang x ∈ [-18, 18]).
-      */}
-
-      {/* Dasar sungai — gelap kebiruan, kasar; terlihat lewat air alpha 0.85 */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 2]} receiveShadow>
-        <planeGeometry args={[36, 1.8]} />
-        <meshStandardMaterial color="#0d1b26" roughness={0.9} metalness={0.15} />
+      {/* Dasar sungai — gelap kebiruan */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01 * CITY_SCALE, RIVER_Z]} receiveShadow>
+        <planeGeometry args={[36 * CITY_SCALE, 1.8 * CITY_SCALE]} />
+        <meshStandardMaterial color="#0a1520" roughness={0.95} metalness={0.1} />
       </mesh>
 
-      {/* Tepian (bank) kiri & kanan — warna tanah/kerikil, sungai terkurung.
-          Tipis 0.22, tinggi 0.15 (0–0.15 dari lantai). */}
-      <mesh position={[0, 0.075, 1.2]}>
-        <boxGeometry args={[36, 0.15, 0.22]} />
-        <meshStandardMaterial color="#3a3a3f" roughness={1} metalness={0} />
+      {/* Tepian (bank) kiri & kanan — batu/kerikil */}
+      <mesh position={[0, 0.075 * CITY_SCALE, RIVER_Z - 0.8 * CITY_SCALE]}>
+        <boxGeometry args={[36 * CITY_SCALE, 0.15 * CITY_SCALE, 0.22 * CITY_SCALE]} />
+        <meshStandardMaterial color="#2a2a2f" roughness={1} metalness={0} />
       </mesh>
-      <mesh position={[0, 0.075, 2.8]}>
-        <boxGeometry args={[36, 0.15, 0.22]} />
-        <meshStandardMaterial color="#4a4a45" roughness={1} metalness={0} />
+      <mesh position={[0, 0.075 * CITY_SCALE, RIVER_Z + 0.8 * CITY_SCALE]}>
+        <boxGeometry args={[36 * CITY_SCALE, 0.15 * CITY_SCALE, 0.22 * CITY_SCALE]} />
+        <meshStandardMaterial color="#3a3a38" roughness={1} metalness={0} />
       </mesh>
 
-      {/* Permukaan air — NormalBlending (bukan Additive) + alpha ~0.85,
-          depthWrite false agar transparansi berlapis dengan riverbed. */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.06, 2]}>
-        <planeGeometry args={[36, 1.38]} />
+      {/* Permukaan air — shader realistis */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.06 * CITY_SCALE, RIVER_Z]}>
+        <planeGeometry args={[36 * CITY_SCALE, 1.38 * CITY_SCALE, 64, 16]} />
         <shaderMaterial
           ref={matRef}
           vertexShader={vertexShader}

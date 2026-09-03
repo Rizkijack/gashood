@@ -4,6 +4,7 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { TxType } from "@/data/tx-classifier";
 import { useGasStore } from "@/store/gas-store";
+import { CITY_SCALE, buildingHeight } from "./layout";
 import {
   PODIUM_HEIGHT,
   PODIUM_WIDTH,
@@ -23,8 +24,9 @@ interface GasBuildingProps {
   position: [number, number, number];
 }
 
-// Tinggi tetap (world units) cap atap — tidak ikut scale tinggi bangunan.
-const ROOF_HEIGHT = 0.15;
+// Tinggi cap atap (world units, skala gedung ×CITY_SCALE) — tidak ikut scale
+// tinggi bangunan per-frame, tapi proporsional terhadap gedung baru.
+const ROOF_HEIGHT = 0.15 * CITY_SCALE;
 // Cap atap sedikit lebih lebar dari stack teratas (parapet menjorok keluar).
 const ROOF_MARGIN = 1.05;
 
@@ -65,15 +67,16 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
   const avgGasPrice = metric?.avgGasPrice ?? 0;
   const recentTxCount = metric?.recentTxCount ?? 0;
 
-  // Height mapping (WORKFLOW.md 2.4): normalize(avgGasUsed, 0, 200_000) * 7.5 + 0.5, clamp agar <= 8
-  const height = useMemo(() => {
-    if (avgGasUsed === 0) return 0.5;
-    return Math.min(avgGasUsed / 200_000, 1) * 7.5 + 0.5;
-  }, [avgGasUsed]);
+  // Height mapping (WORKFLOW.md 2.4): normalize(avgGasUsed, 0, 200_000) * 7.5 + 0.5,
+  // lalu ×CITY_SCALE — rescale kota: gedung 7.5–120 unit vs mobil yang tetap
+  // (rasio realistis gedung vs kendaraan). Rumus SATU SUMBER di layout.ts —
+  // dipakai juga GasParticles agar spawn tidak pernah di dalam menara.
+  const height = useMemo(() => buildingHeight(avgGasUsed), [avgGasUsed]);
 
-  // Width mapping (BUILD_STEPS.md Langkah 12): normalize(recentTxCount, 0, 50) * 1.5 + 0.5, clamp agar <= 2
+  // Width mapping (BUILD_STEPS.md Langkah 12): normalize(recentTxCount, 0, 50) * 1.5 + 0.5,
+  // lalu ×CITY_SCALE (maks 30 unit) — footprint gedung ikut skala kota.
   const width = useMemo(() => {
-    return Math.min(recentTxCount / 50, 1) * 1.5 + 0.5;
+    return (Math.min(recentTxCount / 50, 1) * 1.5 + 0.5) * CITY_SCALE;
   }, [recentTxCount]);
 
   const baseColor = useMemo(() => getColorForGasPrice(avgGasPrice), [avgGasPrice]);
@@ -178,7 +181,7 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
     group.position.y = currentHeight / 2;
 
     // Podium/lobby: tinggi dunia tetap (PODIUM_HEIGHT), lebar PODIUM_WIDTH×
-    // tower (radius efektif max 1.12 < 1.158 — clearance sungai DataRiver).
+    // tower (1.08 — margin bank batu z=16.35 & clearance sungai DataRiver).
     // Counter-scale sumbu Y terhadap group yang diskalakan tinggi bangunan.
     const podium = podiumRef.current;
     if (podium) {
@@ -241,7 +244,7 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
         - Geometri tower di-cache per TxType (merge stack setback) — SATU mesh
           → 1 draw call walau bertingkat.
         - useFrame me-lerp scale/posisi group; mesh anak counter-scale Y.
-        - Podium 1.12× lebar tower → bangunan "tumbuh dari jalan".
+        - Podium 1.08× lebar tower → bangunan "tumbuh dari jalan".
       */}
       <group
         ref={groupRef}
@@ -273,9 +276,10 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
         </mesh>
 
         {/* Podium/lobby: batu gelap + pita kaca pintu masuk menyala (emissive).
-            1.12× lebar tower (radius efektif max 1.12 < 1.158 — clearance
-            sungai DataRiver), tinggi dunia tetap 0.34 (~2 lantai stylized).
-            Handler pointer sama dengan tower → tidak ada dead-zone hover/click. */}
+            1.08× lebar tower (margin bank batu z=16.35 saat width maks — lihat
+            PODIUM_WIDTH di BuildingFacade), tinggi dunia tetap 0.34 (~2 lantai
+            stylized). Handler pointer sama dengan tower → tidak ada dead-zone
+            hover/click. */}
         <mesh
           ref={podiumRef}
           geometry={podiumGeometry}
@@ -339,17 +343,18 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
 
       {/* Floating label — wrapped in <Billboard> agar selalu menghadap kamera
           (drei <Text> tidak auto-billboard). Di luar group animasi → tidak ikut
-          scale bangunan (perilaku lama dipertahankan). Naik ke +1.0 agar di
-          atas antena rooftop (maks ~0.95 dari dasar atap). */}
-      <Billboard position={[0, height + 1.0, 0]}>
+          scale bangunan (perilaku lama dipertahankan). Gap & ukuran teks
+          ×CITY_SCALE agar proporsional dengan gedung 7.5–120 unit dan tetap
+          terbaca dari jarak kota; jelas di atas antena rooftop. */}
+      <Billboard position={[0, height + 1.0 * CITY_SCALE, 0]}>
         <Text
-          fontSize={0.3}
+          fontSize={0.3 * CITY_SCALE}
           color="#fff"
           anchorX="center"
           anchorY="middle"
-          outlineWidth={0.02}
+          outlineWidth={0.02 * CITY_SCALE}
           outlineColor="#000000"
-          maxWidth={2}
+          maxWidth={2 * CITY_SCALE}
           textAlign="center"
         >
           {labelText}
@@ -357,15 +362,15 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
       </Billboard>
 
       {/* Secondary small label for gas price when active — di atas water tower
-          (maks ~0.47 dari dasar atap). */}
+          (gap setengah dari label utama, proporsional ×CITY_SCALE). */}
       {avgGasPrice > 0 && (
-        <Billboard position={[0, height + 0.52, 0]}>
+        <Billboard position={[0, height + 0.52 * CITY_SCALE, 0]}>
           <Text
-            fontSize={0.14}
+            fontSize={0.14 * CITY_SCALE}
             color={baseColor}
             anchorX="center"
             anchorY="middle"
-            outlineWidth={0.01}
+            outlineWidth={0.01 * CITY_SCALE}
             outlineColor="#000000"
           >
             {avgGasPrice < 0.01 ? "<0.01 Gwei" : `${avgGasPrice.toFixed(3)} Gwei`}

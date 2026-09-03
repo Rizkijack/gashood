@@ -6,6 +6,7 @@ import { World } from "@/scene/World";
 import { GasCity } from "@/scene/GasCity";
 import { CameraController } from "@/scene/CameraController";
 import { CameraFocus } from "@/scene/CameraFocus";
+import { CITY_SCALE } from "@/scene/layout";
 import { Dashboard } from "@/ui/Dashboard";
 import { GasTable } from "@/ui/GasTable";
 import { TxFeed } from "@/ui/TxFeed";
@@ -385,7 +386,17 @@ export default function App() {
         <SceneErrorBoundary fallback={<SceneFallbackError />}>
           <Suspense fallback={<Loader />}>
             <Canvas
-              camera={{ position: [15, 12, 15], fov: 50 }}
+              // Posisi kamera ×CITY_SCALE (mengikuti DEFAULT_CAMERA CameraFocus);
+              // near 2 / far 2000 — near 2 melipatgandakan presisi depth buffer
+              // (ambang Δz ≈ 0.021 → 0.011 di jarak 600) demi lapisan tanah/
+              // marka bebas z-fighting, sementara far 2000 tetap memuat sky
+              // dome radius 50×CITY_SCALE=750 tanpa ter-clip.
+              camera={{
+                position: [15 * CITY_SCALE, 12 * CITY_SCALE, 15 * CITY_SCALE],
+                fov: 50,
+                near: 2,
+                far: 2000,
+              }}
               // GPU churn fix: cap 1.5 (dari 2) — dpr tinggi melipatgandakan
               // fill-rate untuk canvas + composer; 1.5 masih tajam di layar umum.
               dpr={[1, 1.5]}

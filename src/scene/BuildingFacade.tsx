@@ -2,7 +2,7 @@ import { useFrame } from "@react-three/fiber";
 import { useLayoutEffect, useRef } from "react";
 import * as THREE from "three";
 import { TxType } from "@/data/tx-classifier";
-import { getBuildingPosition, TX_TYPES_ORDERED } from "./layout";
+import { getBuildingPosition, TX_TYPES_ORDERED, CITY_SCALE } from "./layout";
 
 /* ---------------------------------------------------------------------------
  * BuildingFacade — fasad & detail rooftop prosedural untuk GasBuilding.
@@ -73,11 +73,14 @@ interface ArchetypeDef {
 
 const ARCHETYPES: Record<FacadeArchetype, ArchetypeDef> = {
   // (a) Menara kaca modern — tirai kaca penuh, mullion tipis, reflektif.
+  // floorsTotal di-scale ×CITY_SCALE: jumlah LANTAI mengikuti tinggi gedung
+  // baru (maks 120 unit) sehingga tinggi satuan jendela/lantai di dunia
+  // tetap ~0.5 unit (skala ruang) — BUKAN ukuran jendela yang digandakan.
   glass: {
     stacks: [{ w: 1, y0: 0, y1: 1 }],
     tileCols: 6,
     tileRows: 8,
-    floorsTotal: 16,
+    floorsTotal: 16 * CITY_SCALE,
     litRatio: 0.3,
     metalness: 0.6,
     roughness: 0.22,
@@ -88,7 +91,7 @@ const ARCHETYPES: Record<FacadeArchetype, ArchetypeDef> = {
     stacks: [{ w: 1, y0: 0, y1: 1 }],
     tileCols: 5,
     tileRows: 6,
-    floorsTotal: 12,
+    floorsTotal: 12 * CITY_SCALE,
     litRatio: 0.22,
     metalness: 0.08,
     roughness: 0.78,
@@ -103,7 +106,7 @@ const ARCHETYPES: Record<FacadeArchetype, ArchetypeDef> = {
     ],
     tileCols: 5,
     tileRows: 6,
-    floorsTotal: 12,
+    floorsTotal: 12 * CITY_SCALE,
     litRatio: 0.26,
     metalness: 0.45,
     roughness: 0.4,
@@ -403,11 +406,14 @@ export function getTowerGeometry(txType: TxType): THREE.BufferGeometry {
 
 /* ==== 4. Podium / lobby =================================================== */
 
-/** Podium 1.12× lebar tower — radius efektif max 1.12 < 1.158 (clearance
- * sungai DataRiver, lihat komentar plinth lama). */
-export const PODIUM_WIDTH = 1.12;
-/** Tinggi podium dunia (~2 lantai stylized) — tetap, tidak ikut skala tower. */
-export const PODIUM_HEIGHT = 0.34;
+/** Podium 1.08× lebar tower — overhang di atas body (1.05) TANPA klip bank
+ * batu di baris z=0 saat width maks: half podium maks = 15×1.08 = 16.2 <
+ * 16.35 (tepi inner bank; 1.12 → 16.8 persis menembus). Radius efektif juga
+ * < 1.158×CITY_SCALE (clearance sungai DataRiver, lihat komentar DataRiver). */
+export const PODIUM_WIDTH = 1.08;
+/** Tinggi podium dunia (~2 lantai stylized × CITY_SCALE) — proporsional
+ * terhadap tower yang kini di-scale ×CITY_SCALE. */
+export const PODIUM_HEIGHT = 0.34 * CITY_SCALE;
 
 let podiumTextureSet: FacadeTextureSet | null = null;
 
