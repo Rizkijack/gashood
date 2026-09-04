@@ -3,9 +3,10 @@ import { TxType } from "@/data/tx-classifier";
 /**
  * Shared city layout for GasHood.
  *
- * Mirrors the grid used inside GasCity (4 cols × 3 rows, spacing 60 units,
- * centered at origin) so CameraFocus can compute building positions without
- * importing/relying on GasCity internals.
+ * Refactor 12 → 4 kategori: 4 gedung kini berdiri dalam SATU baris tengah
+ * z=0 (x = (i − 1.5) × SPACING → x ∈ {−90, −30, 30, 90} @ SPACING=60) —
+ * simetris terhadap plaza. GasCity, GasParticles & CameraFocus membaca
+ * posisi lewat helper di file ini — satu sumber kebenaran.
  *
  * IMPORTANT: keep in sync with GasCity's local constants (GasCity is owned by
  * another workstream and must not be edited here).
@@ -17,33 +18,29 @@ import { TxType } from "@/data/tx-classifier";
  * untuk tune ulang seluruh kota dari satu tempat.
  */
 export const CITY_SCALE = 15;
+/** Refactor 12 → 4 kategori: NATIVE_TRANSFER, ERC20_TRANSFER, SWAP, BRIDGE. */
 export const TX_TYPES_ORDERED: TxType[] = [
   TxType.NATIVE_TRANSFER,
   TxType.ERC20_TRANSFER,
-  TxType.ERC20_APPROVE,
-  TxType.DEX_SWAP,
-  TxType.LIQUIDITY,
-  TxType.BRIDGE_DEPOSIT,
-  TxType.BRIDGE_WITHDRAW,
-  TxType.NFT_TRANSFER,
-  TxType.NFT_MINT,
-  TxType.CONTRACT_DEPLOY,
-  TxType.CONTRACT_CALL,
-  TxType.RWA_TOKEN,
+  TxType.SWAP,
+  TxType.BRIDGE,
 ];
 
-// Grid pitch: 4 unit dasar × CITY_SCALE — baris z∈{-60,0,60}, kolom x∈{-90,-30,30,90}.
+// Grid pitch: 4 unit dasar × CITY_SCALE (60) — jarak antar gedung satu baris.
 export const SPACING = 4 * CITY_SCALE;
 
-/** Koridor sungai DataRiver: tepat di tengah antara baris z=0 dan z=SPACING. */
+/** Koridor sungai DataRiver: z=30 (utara baris gedung, warisan grid 4×3). */
 export const RIVER_Z = SPACING / 2;
 
+/**
+ * Posisi gedung ke-i (refactor 12 → 4 kategori — grid 4×3 lama tidak berlaku):
+ * 4 gedung dalam 1 baris tengah z=0, x = (i − 1.5) × SPACING →
+ * {−90, −30, 30, 90} — simetris terhadap plaza. RIVER_Z (z=30) & RoadNetwork
+ * tidak berubah — sungai/jalan tidak menabrak baris z=0.
+ */
 export function indexToPosition(index: number): [number, number, number] {
-  const col = index % 4;
-  const row = Math.floor(index / 4);
-  const x = (col - 1.5) * SPACING;
-  const z = (row - 1) * SPACING;
-  return [x, 0, z];
+  const x = (index - 1.5) * SPACING;
+  return [x, 0, 0];
 }
 
 export function getBuildingPosition(txType: TxType): [number, number, number] {

@@ -1,6 +1,9 @@
 /**
  * Test Zustand store (BUILD_STEPS.md Langkah 9).
  *
+ * Refactor 12 → 4 kategori: asersi yang memakai TxType.DEX_SWAP di-rewrite
+ * ke TxType.SWAP (kategori DEX_SWAP melebur ke SWAP).
+ *
  * Isolasi: gas-store punya state module-scope `priceAccumulator` (akumulator
  * harga non-nol per tipe) yang TIDAK bisa direset via setState. Maka tiap
  * test memakai `vi.resetModules()` + dynamic import untuk mendapat modul
@@ -114,7 +117,7 @@ describe('updateFromBlock / updateMetrics (Langkah 9)', () => {
     const batch1 = [
       makeTx(TxType.NATIVE_TRANSFER),
       makeTx(TxType.NATIVE_TRANSFER),
-      makeTx(TxType.DEX_SWAP),
+      makeTx(TxType.SWAP), // refactor 12→4: eks DEX_SWAP
     ]
     useGasStore.getState().updateFromBlock(batch1, 10)
 
@@ -124,9 +127,9 @@ describe('updateFromBlock / updateMetrics (Langkah 9)', () => {
     expect(native.totalTxCount).toBe(3) // akumulasi lintas batch
     expect(native.recentTxCount).toBe(1) // hanya 1 di batch terbaru
 
-    const dex = useGasStore.getState().gasMetrics.get(TxType.DEX_SWAP)!
-    expect(dex.totalTxCount).toBe(1)
-    expect(dex.recentTxCount).toBe(1)
+    const swap = useGasStore.getState().gasMetrics.get(TxType.SWAP)!
+    expect(swap.totalTxCount).toBe(1)
+    expect(swap.recentTxCount).toBe(1)
   })
 
   it('effectiveGasPrice 0n di-skip — tidak meracuni min/avg/maxGasPrice (perbaikan B1)', () => {
@@ -256,10 +259,11 @@ describe('setBlockscoutGasPrice + preferensi Blockscout-over-RPC (sumber utama g
 
 describe('seleksi UI (Langkah 9)', () => {
   it('selectType / hoverType / clearSelection', () => {
-    useGasStore.getState().selectType(TxType.DEX_SWAP)
+    // refactor 12→4: eks DEX_SWAP → SWAP
+    useGasStore.getState().selectType(TxType.SWAP)
     useGasStore.getState().hoverType(TxType.NATIVE_TRANSFER)
 
-    expect(useGasStore.getState().selectedType).toBe(TxType.DEX_SWAP)
+    expect(useGasStore.getState().selectedType).toBe(TxType.SWAP)
     expect(useGasStore.getState().hoveredType).toBe(TxType.NATIVE_TRANSFER)
 
     useGasStore.getState().clearSelection()

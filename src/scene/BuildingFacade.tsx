@@ -97,20 +97,14 @@ const ARCHETYPES: Record<FacadeArchetype, ArchetypeDef> = {
   },
 };
 
-/** Pemetaan deterministik TxType → arketipe (variasi antar tetangga grid). */
+/** Pemetaan deterministik TxType → arketipe (variasi antar tetangga grid).
+ *  Refactor 12 → 4 kategori: SWAP mewarisi arketipe eks DEX_SWAP (glass),
+ *  BRIDGE mewarisi arketipe eks BRIDGE_DEPOSIT (setback). */
 const ARCHETYPE_BY_TYPE: Record<TxType, FacadeArchetype> = {
   native_transfer: "concrete",
   erc20_transfer: "glass",
-  erc20_approve: "concrete",
-  dex_swap: "glass",
-  liquidity: "setback",
-  bridge_deposit: "setback",
-  bridge_withdraw: "setback",
-  nft_transfer: "concrete",
-  nft_mint: "glass",
-  contract_deploy: "setback",
-  contract_call: "glass",
-  rwa_token: "glass",
+  swap: "glass",
+  bridge: "setback",
 };
 
 export function getFacadeArchetype(txType: TxType): FacadeArchetype {

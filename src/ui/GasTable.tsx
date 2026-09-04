@@ -55,7 +55,7 @@ function rowBackground(selected: boolean, hovered: boolean, color: string): stri
 }
 
 /**
- * 4.2 — Sortable gas fee table (12 tx types).
+ * 4.2 — Sortable gas fee table (4 kategori tx — refactor 12 → 4).
  * Row hover  → store.hoverType (glow building in 3D).
  * Row click  → store.selectType (camera focus + detail panel).
  * Subscribes to store.hoveredType so hovering a 3D building highlights the row.

@@ -24,33 +24,22 @@ Dokumen ini menjelaskan konsep visual, mapping data ke objek 3D, interaksi user,
          │    (warna berubah sesuai network load)        │
          │                                               │
          │   ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐       │
-         │   │NATV │  │ERC20│  │APPRV│  │ SWAP│        │
-         │   │  █  │  │ ██  │  │  █  │  │████ │        │
-         │   │  █  │  │ ██  │  │  █  │  │████ │        │
-         │   │  █  │  │ ██  │  │     │  │████ │        │
+         │   │NATV │  │ERC20│  │ SWAP│  │BRDG │        │
+         │   │  █  │  │ ██  │  │████ │  │  █  │        │
+         │   │  █  │  │ ██  │  │████ │  │  █  │        │
+         │   │  █  │  │ ██  │  │████ │  │  █  │        │
          │   └──┬──┘  └──┬──┘  └──┬──┘  └──┬──┘        │
          │      │        │        │        │             │
          │ ═════╧════════╧════════╧════════╧══════      │
          │ ~~~ DataRiver ~~~ DataRiver ~~~ DataRiver ~~  │
          │ ═══════════════════════════════════════════   │
-         │      │        │        │        │             │
-         │   ┌──┴──┐  ┌──┴──┐  ┌──┴──┐  ┌──┴──┐       │
-         │   │ LIQ │  │BRDG↑│  │BRDG↓│  │ NFT │        │
-         │   │ ██  │  │  █  │  │  █  │  │ █   │        │
-         │   │ ██  │  │     │  │     │  │     │        │
-         │   └─────┘  └─────┘  └─────┘  └─────┘        │
-         │                                               │
-         │   ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐       │
-         │   │MINT │  │DEPLY│  │CALL │  │ RWA │        │
-         │   │  █  │  │  █  │  │ ███ │  │ ██  │        │
-         │   │     │  │     │  │ ███ │  │ ██  │        │
-         │   └─────┘  └─────┘  └─────┘  └─────┘        │
          │                                               │
          │           [Ground Plane + Grid]               │
          └──────────────────────────────────────────────┘
 ```
 
-**Layout:** Grid 4 kolom × 3 baris, dipisahkan oleh "DataRiver" di tengah.
+**Layout:** Refactor 12 → 4 kategori — 4 gedung dalam SATU baris tengah z=0
+(x = (i−1.5)×SPACING → simetris terhadap plaza); DataRiver tetap di z=30.
 
 ---
 
@@ -58,7 +47,7 @@ Dokumen ini menjelaskan konsep visual, mapping data ke objek 3D, interaksi user,
 
 ### Bangunan (GasBuilding)
 
-Setiap tipe transaksi = 1 bangunan. Total 12 bangunan.
+Setiap kategori transaksi = 1 bangunan. Total 4 bangunan (refactor 12 → 4).
 
 | Properti 3D | Data Source | Range | Formula |
 |---|---|---|---|
@@ -112,20 +101,12 @@ Setiap transaksi baru = 1 partikel muncul dari bangunan terkait.
 | **Velocity** | Random + upward | Naik + drift horizontal random |
 | **Lifetime** | 3 detik | Fade out lalu recycle |
 
-**Warna per tipe transaksi:**
+**Warna per kategori transaksi (refactor 12 → 4):**
 ```
-NATIVE_TRANSFER  → #4FC3F7 (biru muda)
-ERC20_TRANSFER   → #81C784 (hijau)
-ERC20_APPROVE    → #AED581 (hijau muda)
-DEX_SWAP         → #FFD54F (kuning emas)
-LIQUIDITY        → #FF8A65 (oranye)
-BRIDGE_DEPOSIT   → #CE93D8 (ungu muda)
-BRIDGE_WITHDRAW  → #B39DDB (lavender)
-NFT_TRANSFER     → #F48FB1 (pink)
-NFT_MINT         → #EF5350 (merah)
-CONTRACT_DEPLOY  → #90A4AE (abu-abu biru)
-CONTRACT_CALL    → #78909C (abu-abu)
-RWA_TOKEN        → #4DD0E1 (cyan)
+NATIVE_TRANSFER  → #4FC3F7 (biru muda — tetap)
+ERC20_TRANSFER   → #81C784 (hijau — tetap)
+SWAP             → #FFD54F (kuning emas — warisan eks DEX_SWAP)
+BRIDGE           → #CE93D8 (ungu muda — warisan eks BRIDGE_DEPOSIT)
 ```
 
 **Implementasi InstancedMesh:**

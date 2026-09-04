@@ -40,7 +40,7 @@ Catatan: sound design (5.4) dan SSAO sengaja ditunda — opsional, tidak menghal
 
 ## Fitur
 
-- **12 Tipe Transaksi** — Native transfer, ERC-20, swap, bridge, NFT, deploy, RWA
+- **4 Kategori Transaksi** — Native Transfer, ERC-20 Transfer, Swap, Bridge (refactor 12 → 4; interaksi kontrak lain dialihkan ke Swap/Bridge)
 - **Dunia 3D "Gas City"** — Bangunan, partikel instanced, sungai data shader, langit dinamis
 - **Real-time** — Polling block terbaru setiap 2-5 detik (adaptive interval)
 - **Dashboard 2D Overlay** — Stats bar, tabel sortable, feed transaksi live

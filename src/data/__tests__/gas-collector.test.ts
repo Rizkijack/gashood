@@ -141,7 +141,8 @@ describe('aggregateMetrics (Langkah 8)', () => {
       makeClassified(TxType.ERC20_TRANSFER, { gasUsed: 100n, effectiveGasPrice: gwei(1n), fee: 100n * gwei(1n) }),
       makeClassified(TxType.ERC20_TRANSFER, { gasUsed: 200n, effectiveGasPrice: gwei(2n), fee: 200n * gwei(2n) }),
       makeClassified(TxType.ERC20_TRANSFER, { gasUsed: 300n, effectiveGasPrice: gwei(3n), fee: 300n * gwei(3n) }),
-      makeClassified(TxType.DEX_SWAP, { gasUsed: 400n, effectiveGasPrice: gwei(10n), fee: 400n * gwei(10n) }),
+      // refactor 12→4: eks DEX_SWAP → SWAP
+      makeClassified(TxType.SWAP, { gasUsed: 400n, effectiveGasPrice: gwei(10n), fee: 400n * gwei(10n) }),
     ]
 
     const metrics = aggregateMetrics(txs)
@@ -156,10 +157,10 @@ describe('aggregateMetrics (Langkah 8)', () => {
     // total fee = (100·1 + 200·2 + 300·3) gwei = 1.4e12 wei = 1.4e-6 ETH
     expect(erc20.totalFeeEth).toBeCloseTo(1.4e-6, 12)
 
-    const dex = metrics.get(TxType.DEX_SWAP)!
-    expect(dex.totalTxCount).toBe(1)
-    expect(dex.avgGasUsed).toBe(400)
-    expect(dex.avgGasPrice).toBe(10)
+    const swap = metrics.get(TxType.SWAP)!
+    expect(swap.totalTxCount).toBe(1)
+    expect(swap.avgGasUsed).toBe(400)
+    expect(swap.avgGasPrice).toBe(10)
 
     // Tipe tanpa tx → skeleton nol, trend default 'stable'
     const native = metrics.get(TxType.NATIVE_TRANSFER)!
@@ -173,7 +174,8 @@ describe('aggregateMetrics (Langkah 8)', () => {
     const txs = [
       makeClassified(TxType.ERC20_TRANSFER, { effectiveGasPrice: gwei(2n), fee: 21_000n * gwei(2n) }),
       makeClassified(TxType.ERC20_TRANSFER, { effectiveGasPrice: 0n, fee: 0n }),
-      makeClassified(TxType.DEX_SWAP, { effectiveGasPrice: 0n, fee: 0n }),
+      // refactor 12→4: eks DEX_SWAP → SWAP
+      makeClassified(TxType.SWAP, { effectiveGasPrice: 0n, fee: 0n }),
     ]
 
     const metrics = aggregateMetrics(txs)
@@ -184,19 +186,18 @@ describe('aggregateMetrics (Langkah 8)', () => {
     expect(erc20.minGasPrice).toBe(2)
     expect(erc20.maxGasPrice).toBe(2)
 
-    const dex = metrics.get(TxType.DEX_SWAP)!
-    expect(dex.totalTxCount).toBe(1)
-    expect(dex.avgGasPrice).toBe(0)
-    expect(dex.minGasPrice).toBe(Infinity)
-    expect(dex.maxGasPrice).toBe(0)
+    const swap = metrics.get(TxType.SWAP)!
+    expect(swap.totalTxCount).toBe(1)
+    expect(swap.avgGasPrice).toBe(0)
+    expect(swap.minGasPrice).toBe(Infinity)
+    expect(swap.maxGasPrice).toBe(0)
   })
 
-  it('input kosong (0 tx) → tidak crash; hasil skeleton 12 tipe dengan metrik nol', () => {
-    // Catatan drift dokumen: BUILD_STEPS.md bilang "map kosong" — aktualnya
-    // aggregateMetrics mengembalikan skeleton untuk SEMUA 12 TxType bernilai nol.
+  it('input kosong (0 tx) → tidak crash; hasil skeleton 4 kategori dengan metrik nol (refactor 12→4)', () => {
+    // Refactor 12 → 4 kategori: skeleton kini untuk SEMUA 4 TxType bernilai nol.
     const metrics = aggregateMetrics([])
 
-    expect(metrics.size).toBe(12)
+    expect(metrics.size).toBe(4)
     for (const metric of metrics.values()) {
       expect(metric.totalTxCount).toBe(0)
       expect(metric.avgGasUsed).toBe(0)

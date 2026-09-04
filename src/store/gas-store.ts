@@ -74,6 +74,13 @@ const MAX_RECENT_TXS = parseMaxRecentTxs(import.meta.env.VITE_MAX_RECENT_TXS)
  */
 const priceAccumulator = new Map<TxType, { sumGwei: number; count: number }>()
 
+/**
+ * Skeleton metrik awal — di-generate dari `Object.values(TxType)` sehingga
+ * OTOMATIS mengikuti jumlah kategori (refactor 12 → 4: NATIVE_TRANSFER,
+ * ERC20_TRANSFER, SWAP, BRIDGE). Catatan deploy: key Map metrics berganti
+ * (kategori lama hilang, SWAP/BRIDGE baru) → metrik in-memory ter-reset;
+ * acceptable karena store tidak punya persistensi.
+ */
 const createInitialMetrics = (): Map<TxType, GasMetric> => {
   const metrics = new Map<TxType, GasMetric>()
   for (const type of Object.values(TxType)) {

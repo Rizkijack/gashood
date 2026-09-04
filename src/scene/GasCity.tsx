@@ -1,11 +1,9 @@
 import { GasBuilding } from "./GasBuilding";
 import { getBuildingPosition, TX_TYPES_ORDERED } from "./layout";
 
-/**
- * Grid 4×3, spacing 4 units, center at 0,0.
- * Positions & type order come from ./layout — the single source of truth
- * shared with GasParticles & CameraFocus.
- */
+// Refactor 12 → 4 kategori: 4 gedung, satu baris tengah z=0.
+// Positions & type order come from ./layout — the single source of truth
+// shared with GasParticles & CameraFocus.
 export function GasCity() {
   return (
     <group>

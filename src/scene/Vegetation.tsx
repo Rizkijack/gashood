@@ -1,11 +1,12 @@
 import { useLayoutEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
-import { CITY_SCALE, RIVER_Z } from "./layout";
+import { CITY_SCALE, RIVER_Z, TX_TYPES_ORDERED, getBuildingPosition } from "./layout";
 
 /* ---------------------------------------------------------------------------
  * Vegetasi statis GasHood — hutan + rumput.
  * 1/3 area map dipenuhi pepohonan secara acak dan natural.
- * Tidak menimpa: bangunan (grid 4×3), sungai, plaza, sidewalk.
+ * Tidak menimpa: bangunan (refactor 12→4: satu baris z=0), sungai, plaza,
+ * sidewalk.
  * ------------------------------------------------------------------------- */
 
 function mulberry32(seed: number): () => number {
@@ -22,28 +23,20 @@ const TREE_COUNT = 220;
 const GRASS_COUNT = 800;
 
 // ── Zona terlarang (tidak boleh ada pohon) ──────────────────────────
-// Grid bangunan 4×3, spacing = SPACING (4×CITY_SCALE).
+// Refactor 12→4 kategori: posisi bangunan DERIVE dari layout.ts (satu
+// sumber kebenaran) — tidak lagi hardcode grid 4×3, jadi tidak mungkin
+// drift lagi kalau tata letak berubah.
 // Setiap bangunan punya footprint ~2×2 (lebar max 2 × 1.05 hover × 1.05 scale).
 const BUILDING_HALF_W = 1.5 * CITY_SCALE; // margin aman di sekitar bangunan
 const RIVER_X_RANGE = 18 * CITY_SCALE; // sungai membentang x ±18
 const PLAZA_HALF = 13 * CITY_SCALE; // plaza aspal
 const SIDEWALK_RING = 13.5 * CITY_SCALE; // sidewalk ring
 
-// Grid posisi bangunan (sama dengan layout.ts tapi untuk collision check)
-const BUILDING_POSITIONS: [number, number][] = [
-  [-6 * CITY_SCALE, -4 * CITY_SCALE],
-  [-2 * CITY_SCALE, -4 * CITY_SCALE],
-  [2 * CITY_SCALE, -4 * CITY_SCALE],
-  [6 * CITY_SCALE, -4 * CITY_SCALE],
-  [-6 * CITY_SCALE, 0],
-  [-2 * CITY_SCALE, 0],
-  [2 * CITY_SCALE, 0],
-  [6 * CITY_SCALE, 0],
-  [-6 * CITY_SCALE, 4 * CITY_SCALE],
-  [-2 * CITY_SCALE, 4 * CITY_SCALE],
-  [2 * CITY_SCALE, 4 * CITY_SCALE],
-  [6 * CITY_SCALE, 4 * CITY_SCALE],
-];
+// Posisi bangunan dari layout.ts (4 gedung, satu baris z=0) — [x, z].
+const BUILDING_POSITIONS: [number, number][] = TX_TYPES_ORDERED.map((txType) => {
+  const [x, , z] = getBuildingPosition(txType);
+  return [x, z];
+});
 
 interface TreeSpec {
   x: number;
@@ -89,7 +82,7 @@ function isInExclusionZone(x: number, z: number): boolean {
     return true;
   }
 
-  // 4. Bangunan (12 titik grid)
+  // 4. Bangunan (4 titik grid — derive dari layout.ts)
   for (const [bx, bz] of BUILDING_POSITIONS) {
     if (Math.abs(x - bx) < BUILDING_HALF_W && Math.abs(z - bz) < BUILDING_HALF_W) {
       return true;

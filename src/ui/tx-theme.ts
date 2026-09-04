@@ -1,53 +1,32 @@
 import { TxType } from "@/data/tx-classifier";
 
 /**
- * Per-transaction-type theme constants shared by the Fase 4 UI overlay.
+ * Tema per-kategori-transaksi (refactor 12 → 4 kategori) shared by the
+ * Fase 4 UI overlay.
+ * Warna warisan: SWAP memakai warna eks DEX_SWAP, BRIDGE memakai warna
+ * eks BRIDGE_DEPOSIT; NATIVE_TRANSFER & ERC20_TRANSFER tetap.
  * Colors match the particle colors from docs/3D_DESIGN.md ("Warna per tipe transaksi").
  */
 export const TX_COLORS: Record<TxType, string> = {
   [TxType.NATIVE_TRANSFER]: "#4FC3F7",
   [TxType.ERC20_TRANSFER]: "#81C784",
-  [TxType.ERC20_APPROVE]: "#AED581",
-  [TxType.DEX_SWAP]: "#FFD54F",
-  [TxType.LIQUIDITY]: "#FF8A65",
-  [TxType.BRIDGE_DEPOSIT]: "#CE93D8",
-  [TxType.BRIDGE_WITHDRAW]: "#B39DDB",
-  [TxType.NFT_TRANSFER]: "#F48FB1",
-  [TxType.NFT_MINT]: "#EF5350",
-  [TxType.CONTRACT_DEPLOY]: "#90A4AE",
-  [TxType.CONTRACT_CALL]: "#78909C",
-  [TxType.RWA_TOKEN]: "#4DD0E1",
+  [TxType.SWAP]: "#FFD54F", // warisan eks DEX_SWAP
+  [TxType.BRIDGE]: "#CE93D8", // warisan eks BRIDGE_DEPOSIT
 };
 
 export const TX_LABELS: Record<TxType, string> = {
   [TxType.NATIVE_TRANSFER]: "Native Transfer",
   [TxType.ERC20_TRANSFER]: "ERC-20 Transfer",
-  [TxType.ERC20_APPROVE]: "ERC-20 Approve",
-  [TxType.DEX_SWAP]: "DEX Swap",
-  [TxType.LIQUIDITY]: "Liquidity",
-  [TxType.BRIDGE_DEPOSIT]: "Bridge Deposit",
-  [TxType.BRIDGE_WITHDRAW]: "Bridge Withdraw",
-  [TxType.NFT_TRANSFER]: "NFT Transfer",
-  [TxType.NFT_MINT]: "NFT Mint",
-  [TxType.CONTRACT_DEPLOY]: "Contract Deploy",
-  [TxType.CONTRACT_CALL]: "Contract Call",
-  [TxType.RWA_TOKEN]: "RWA Token",
+  [TxType.SWAP]: "Swap",
+  [TxType.BRIDGE]: "Bridge",
 };
 
-/** Canonical display order (matches GasCity grid + store map insertion order). */
+/** Canonical display order (matches GasCity row + store map insertion order). */
 export const TX_ORDER: TxType[] = [
   TxType.NATIVE_TRANSFER,
   TxType.ERC20_TRANSFER,
-  TxType.ERC20_APPROVE,
-  TxType.DEX_SWAP,
-  TxType.LIQUIDITY,
-  TxType.BRIDGE_DEPOSIT,
-  TxType.BRIDGE_WITHDRAW,
-  TxType.NFT_TRANSFER,
-  TxType.NFT_MINT,
-  TxType.CONTRACT_DEPLOY,
-  TxType.CONTRACT_CALL,
-  TxType.RWA_TOKEN,
+  TxType.SWAP,
+  TxType.BRIDGE,
 ];
 
 export interface GasBracket {

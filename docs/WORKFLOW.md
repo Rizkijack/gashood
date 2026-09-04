@@ -122,16 +122,16 @@ Setup proyek, koneksi ke blockchain, klasifikasi transaksi, dan state management
 
 #### 1.5 Transaction Classifier
 - [x] Buat `src/data/tx-classifier.ts`
-  - `TxType` enum (12 tipe)
+  - `TxType` enum (4 kategori — refactor 12→4: NATIVE_TRANSFER, ERC20_TRANSFER, SWAP, BRIDGE)
   - `METHOD_SIGNATURES` map (4-byte → tipe)
   - `classifyTransaction(tx)` → TxType
   - Handle edge case: transferFrom (ERC-20 vs ERC-721)
 - [x] **Test:** `tx-classifier.test.ts`
   - Native transfer (empty calldata)
   - ERC-20 transfer (0xa9059cbb)
-  - Contract deploy (to = null)
-  - DEX swap (0x38ed1739)
-  - Unknown method → CONTRACT_CALL
+  - Contract deploy (to = null) → Swap
+  - DEX swap (0x38ed1739) → Swap
+  - Unknown method → Swap (fallback)
 
 #### 1.6 Gas Collector
 - [x] Buat `src/data/gas-collector.ts`
@@ -203,11 +203,11 @@ Scene 3D dasar dengan bangunan statis yang terhubung ke Zustand store.
 
 #### 2.3 Gas City Layout
 - [x] Buat `src/scene/GasCity.tsx`
-  - Layout grid 4×3 dengan spacing
+  - Layout 1 baris tengah z=0 (refactor 12→4: 4 gedung, x = (i−1.5)×SPACING)
   - Posisi bangunan computed dari index
   - Map dari TxType → posisi grid
-  - Render 12 `<GasBuilding>` children
-- [x] Verifikasi: 12 box muncul di grid
+  - Render 4 `<GasBuilding>` children
+- [x] Verifikasi: 4 box muncul di baris tengah
 
 #### 2.4 Gas Building
 - [x] Buat `src/scene/GasBuilding.tsx`
@@ -236,7 +236,7 @@ Scene 3D dasar dengan bangunan statis yang terhubung ke Zustand store.
 - [x] Verifikasi: bangunan berubah saat data baru masuk
 
 ### Kriteria Selesai Fase 2
-- ✅ 12 bangunan tampil di grid dengan label
+- ✅ 4 bangunan tampil di baris tengah dengan label (refactor 12→4)
 - ✅ Bangunan mempunyai warna sesuai gas price
 - ✅ Kamera bisa di-orbit, zoom, pan
 - ✅ Data dari RPC mengubah tinggi bangunan
@@ -445,7 +445,7 @@ Visual polish, error handling, dokumentasi, dan deployment.
 |---|---|---|
 | 1 | Data akurat | Gas fee di app = gas fee di Blockscout (selisih < 1%) |
 | 2 | Real-time | Data delay < 10 detik dari block time |
-| 3 | Klasifikasi benar | 12 tipe tx teridentifikasi, coverage > 90% |
+| 3 | Klasifikasi benar | 4 kategori tx teridentifikasi (refactor 12→4), coverage > 90% |
 | 4 | 3D visual | Bangunan, partikel, sungai, langit — semua reaktif |
 | 5 | Performa | 60 FPS stabil di mid-range hardware |
 | 6 | Interaktif | Hover, klik, navigasi kamera, tabel↔3D sync |

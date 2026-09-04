@@ -20,19 +20,13 @@ const MOBILE_WIDTH_PX = 768
 const DEAD_COLOR = new THREE.Color(0, 0, 0)
 const FALLBACK_COLOR = new THREE.Color('#ffffff')
 
+// Refactor 12 → 4 kategori: SWAP mewarisi warna eks DEX_SWAP,
+// BRIDGE mewarisi warna eks BRIDGE_DEPOSIT; transfer tetap.
 const TX_PARTICLE_COLORS: Record<TxType, THREE.Color> = {
   [TxType.NATIVE_TRANSFER]:  new THREE.Color('#4FC3F7'),
   [TxType.ERC20_TRANSFER]:   new THREE.Color('#81C784'),
-  [TxType.ERC20_APPROVE]:    new THREE.Color('#AED581'),
-  [TxType.DEX_SWAP]:         new THREE.Color('#FFD54F'),
-  [TxType.LIQUIDITY]:        new THREE.Color('#FF8A65'),
-  [TxType.BRIDGE_DEPOSIT]:   new THREE.Color('#CE93D8'),
-  [TxType.BRIDGE_WITHDRAW]:  new THREE.Color('#B39DDB'),
-  [TxType.NFT_TRANSFER]:     new THREE.Color('#F48FB1'),
-  [TxType.NFT_MINT]:         new THREE.Color('#EF5350'),
-  [TxType.CONTRACT_DEPLOY]:  new THREE.Color('#90A4AE'),
-  [TxType.CONTRACT_CALL]:    new THREE.Color('#78909C'),
-  [TxType.RWA_TOKEN]:        new THREE.Color('#4DD0E1'),
+  [TxType.SWAP]:             new THREE.Color('#FFD54F'), // eks DEX_SWAP
+  [TxType.BRIDGE]:           new THREE.Color('#CE93D8'), // eks BRIDGE_DEPOSIT
 }
 
 interface Particle {

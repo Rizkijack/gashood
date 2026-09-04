@@ -87,23 +87,16 @@ Klasifikasi transaksi berdasarkan calldata:
 export enum TxType {
   NATIVE_TRANSFER = "native_transfer",
   ERC20_TRANSFER  = "erc20_transfer",
-  ERC20_APPROVE   = "erc20_approve",
-  DEX_SWAP        = "dex_swap",
-  LIQUIDITY       = "liquidity",
-  BRIDGE_DEPOSIT  = "bridge_deposit",
-  BRIDGE_WITHDRAW = "bridge_withdraw",
-  NFT_TRANSFER    = "nft_transfer",
-  NFT_MINT        = "nft_mint",
-  CONTRACT_DEPLOY = "contract_deploy",
-  CONTRACT_CALL   = "contract_call",
-  RWA_TOKEN       = "rwa_token",
+  SWAP            = "swap",   // refactor 12→4: melebur DEX_SWAP, LIQUIDITY,
+                              // ERC20_APPROVE, NFT_MINT, CONTRACT_DEPLOY/CALL, RWA_TOKEN
+  BRIDGE          = "bridge", // refactor 12→4: merge BRIDGE_DEPOSIT + BRIDGE_WITHDRAW
 }
 ```
-Logika klasifikasi:
-1. `to === null` → `CONTRACT_DEPLOY`
+Logika klasifikasi (refactor 12 → 4 kategori):
+1. `to === null` → `SWAP` (eks CONTRACT_DEPLOY)
 2. `data === "0x"` atau kosong → `NATIVE_TRANSFER`
-3. Match 4-byte selector dari daftar known methods
-4. Fallback → `CONTRACT_CALL`
+3. Match 4-byte selector dari daftar known methods (NFT transfer → ERC20_TRANSFER; approve/swap/liquidity/mint/call → SWAP; bridge deposit+withdraw → BRIDGE)
+4. Fallback → `SWAP` (eks CONTRACT_CALL)
 
 #### `src/data/gas-collector.ts`
 Orchestrator utama yang menjalankan polling loop:
@@ -181,10 +174,10 @@ Root scene setup:
 - Post-processing pipeline
 
 #### `src/scene/GasCity.tsx`
-Container yang me-layout bangunan dalam grid:
-- 12 bangunan untuk 12 tipe transaksi
-- Grid 4×3 atau circular layout
-- Spacing dinamis berdasarkan viewport
+Container yang me-layout bangunan dalam satu baris (refactor 12 → 4):
+- 4 bangunan untuk 4 kategori transaksi (NATIVE_TRANSFER, ERC20_TRANSFER, SWAP, BRIDGE)
+- Baris tengah z=0, x = (i − 1.5) × SPACING → simetris terhadap plaza
+- Spacing tetap 4 × CITY_SCALE
 
 #### `src/scene/GasBuilding.tsx`
 Satu bangunan mewakili satu tipe transaksi:
@@ -307,6 +300,6 @@ Legenda warna dan simbol:
 
 1. **RPC Failure** → Retry 3× dengan exponential backoff, fallback ke Blockscout API
 2. **Blockscout Failure** → Tetap jalan dari RPC saja, log warning
-3. **Parse Error** → Klasifikasi sebagai `CONTRACT_CALL` (fallback)
+3. **Parse Error** → Klasifikasi sebagai `SWAP` (fallback; eks CONTRACT_CALL)
 4. **WebGL Error** → Tampilkan fallback 2D dashboard
 5. **Rate Limit** → Adaptive polling interval (2s → 5s → 10s)
