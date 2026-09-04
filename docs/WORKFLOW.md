@@ -213,7 +213,7 @@ Scene 3D dasar dengan bangunan statis yang terhubung ke Zustand store.
 - [x] Buat `src/scene/GasBuilding.tsx`
   - Props: `txType`, `position`
   - Subscribe ke Zustand store untuk metric tipe ini
-  - BoxGeometry dengan height dari avgGasUsed
+  - Height dari avgGasPrice (Gwei): 1 Gwei = 50 m — gauge real-time Blockscout
   - Color dari gas price bracket
   - Floating `<Text>` label di atas bangunan
   - Hover handler: `onPointerOver/Out`

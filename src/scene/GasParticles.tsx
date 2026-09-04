@@ -80,12 +80,10 @@ export function GasParticles() {
     if (!inactive) return
 
     // Tinggi gedung dari rumus SATU SUMBER buildingHeight() (layout.ts) —
-    // sama persis dengan GasBuilding → partikel selalu spawn ~0.5×CITY_SCALE
-    // (7.5 unit) DI ATAS atap untuk semua nilai avgGasUsed (jitter sebaran
-    // ×CITY_SCALE menutup footprint gedung baru; ukuran & kecepatan TETAP).
-    const heightNorm = gasMetrics.get(txType)
-      ? buildingHeight(gasMetrics.get(txType)?.avgGasUsed || 100_000)
-      : 2 * CITY_SCALE
+    // SUMBER SAMA PERSIS dengan GasBuilding (avgGasPrice Gwei): partikel
+    // selalu spawn ~7.5 unit (0.5×CITY_SCALE) DI ATAS atap saat ini, termasuk
+    // saat tinggi berubah mengikuti poll gas price (0/tidak ada data → MIN).
+    const heightNorm = buildingHeight(gasMetrics.get(txType)?.avgGasPrice ?? 0)
 
     inactive.position.set(
       buildingPos[0] + (Math.random() - 0.5) * 0.8 * CITY_SCALE,

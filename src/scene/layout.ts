@@ -52,13 +52,34 @@ export function getBuildingPosition(txType: TxType): [number, number, number] {
   return indexToPosition(index);
 }
 
+/* ==== Tinggi gedung = gauge gas price real-time =========================== */
+
 /**
- * Tinggi gedung (world units) dari avgGasUsed — SATU sumber rumus.
- * WORKFLOW.md 2.4: normalize(avgGasUsed, 0, 200_000) * 7.5 + 0.5, lalu
- * ×CITY_SCALE. GasBuilding (visual) & GasParticles (spawn) WAJIB import
- * fungsi ini — jangan duplikasi angka (divergensi 200_000 vs 300_000 pernah
+ * Konversi rasio user: **1 Gwei = 50 m** tinggi gedung. Skala dunia 1 unit ≈
+ * 4.5 m (mobil 1.0 unit ≈ 4.5 m) → 1 Gwei ≈ 11.11 unit tinggi. Linear murni
+ * proporsional — TANPA normalisasi min/max seperti rumus avgGasUsed lama:
+ * skyline membaca harga jaringan, bukan aktivitas per kategori.
+ */
+export const HEIGHT_UNITS_PER_GWEI = 50 / 4.5;
+
+/** Idle/tidak ada data harga (avgGasPrice 0/NaN/negatif) — 7.5 unit,
+ * kesinambungan dengan lantai terendah sistem fasad lama. */
+export const MIN_BUILDING_HEIGHT = 7.5;
+
+/** Batas atas 150 unit ≈ 675 m @ ~13.5 Gwei — headroom jelas di atas rentang
+ * gas price normal, spike ekstrem tetap terbaca tanpa menembus langit. */
+export const MAX_BUILDING_HEIGHT = 150;
+
+/**
+ * Tinggi gedung (world units) dari avgGasPrice (Gwei) — SATU sumber rumus.
+ * Tinggi = gauge gas price real-time; sumber nilai = Blockscout gas tracker
+ * (sudah ter-wire ke store). GasBuilding (visual) & GasParticles (spawn)
+ * WAJIB import fungsi ini — jangan duplikasi angka (divergensi dulu pernah
  * membuat partikel spawn di dalam menara).
  */
-export function buildingHeight(avgGasUsed: number): number {
-  return (Math.min(avgGasUsed / 200_000, 1) * 7.5 + 0.5) * CITY_SCALE;
+export function buildingHeight(avgGasPriceGwei: number): number {
+  // Input invalid (NaN) atau ≤ 0 → MIN (NaN gagal semua perbandingan numerik).
+  if (!(avgGasPriceGwei > 0)) return MIN_BUILDING_HEIGHT;
+  const raw = avgGasPriceGwei * HEIGHT_UNITS_PER_GWEI;
+  return Math.min(Math.max(raw, MIN_BUILDING_HEIGHT), MAX_BUILDING_HEIGHT);
 }

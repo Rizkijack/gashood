@@ -62,7 +62,7 @@ Setiap tipe transaksi = 1 bangunan. Total 12 bangunan.
 
 | Properti 3D | Data Source | Range | Formula |
 |---|---|---|---|
-| **Height (Y)** | `avgGasUsed` | 0.5 — 8.0 units | `normalize(avgGasUsed, minGas, maxGas) × 7.5 + 0.5` |
+| **Height (Y)** | `avgGasPrice` (Gwei, real-time Blockscout) | 7.5 — 150 units | linear `gwei × (50/4.5)` — rasio 1 Gwei = 50 m, clamp 7.5–150 |
 | **Width (X,Z)** | `recentTxCount` | 0.5 — 2.0 units | `normalize(txCount, 0, maxCount) × 1.5 + 0.5` |
 | **Color** | `avgGasPrice` (Gwei) | Gradient | Lihat tabel warna di bawah |
 | **Emissive** | `recentTxCount` | 0 — 1 intensity | Lebih banyak tx = lebih terang |

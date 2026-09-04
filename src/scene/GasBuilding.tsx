@@ -9,6 +9,7 @@ import { GAS_BRACKETS } from "@/ui/tx-theme";
 import {
   PODIUM_HEIGHT,
   PODIUM_WIDTH,
+  applyFacadeRepeat,
   getFacadeMaterialParams,
   getFacadeTextures,
   getPodiumGeometry,
@@ -107,15 +108,14 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
   const hoveredType = useGasStore((s) => s.hoveredType);
   const selectedType = useGasStore((s) => s.selectedType);
 
-  const avgGasUsed = metric?.avgGasUsed ?? 0;
   const avgGasPrice = metric?.avgGasPrice ?? 0;
   const recentTxCount = metric?.recentTxCount ?? 0;
 
-  // Height mapping (WORKFLOW.md 2.4): normalize(avgGasUsed, 0, 200_000) * 7.5 + 0.5,
-  // lalu ×CITY_SCALE — rescale kota: gedung 7.5–120 unit vs mobil yang tetap
-  // (rasio realistis gedung vs kendaraan). Rumus SATU SUMBER di layout.ts —
-  // dipakai juga GasParticles agar spawn tidak pernah di dalam menara.
-  const height = useMemo(() => buildingHeight(avgGasUsed), [avgGasUsed]);
+  // Height mapping — gauge gas price real-time (Blockscout gas tracker):
+  // linear 1 Gwei = 50 m = 50/4.5 unit, clamp 7.5–150 (idle/tidak ada data
+  // harga → MIN). Rumus SATU SUMBER di layout.ts — dipakai juga GasParticles
+  // agar spawn tidak pernah di dalam menara.
+  const height = useMemo(() => buildingHeight(avgGasPrice), [avgGasPrice]);
 
   // Width mapping (BUILD_STEPS.md Langkah 12): normalize(recentTxCount, 0, 50) * 1.5 + 0.5,
   // lalu ×CITY_SCALE (maks 30 unit) — footprint gedung ikut skala kota.
@@ -125,8 +125,19 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
 
   const baseColor = useMemo(() => getColorForGasPrice(avgGasPrice), [avgGasPrice]);
 
-  // Tekstur & geometri fasad — di-cache per TxType di helper (dibuat sekali).
-  const facade = useMemo(() => getFacadeTextures(txType), [txType]);
+  // Tekstur fasad — master strip di-cache per warna bracket (≤7 entri);
+  // helper mengembalikan CLONE per bangunan (texture.repeat = properti
+  // Texture, tiap gedung butuh transform sendiri karena tinggi lerp beda).
+  // Clone lama di-dispose saat baseColor berganti/unmount — master tetap
+  // hidup di cache modul.
+  const facade = useMemo(() => getFacadeTextures(baseColor), [baseColor]);
+  useEffect(() => {
+    return () => {
+      facade.map.dispose();
+      facade.emissiveMap.dispose();
+      facade.roughnessMap.dispose();
+    };
+  }, [facade]);
   const towerGeometry = useMemo(() => getTowerGeometry(txType), [txType]);
   const facadeParams = useMemo(() => getFacadeMaterialParams(txType), [txType]);
   const topStackWidth = useMemo(() => getTopStackWidth(txType), [txType]);
@@ -194,6 +205,12 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
     if (currentHeightRef.current === null) currentHeightRef.current = height;
     currentHeightRef.current = THREE.MathUtils.lerp(currentHeightRef.current, height, 0.05);
     const currentHeight = currentHeightRef.current;
+
+    // Fasad tile berulang: jumlah lantai & kolom jendela mengikuti nilai
+    // LERP saat itu → jendela tetap berukuran fisik (~0.5 unit/lantai)
+    // saat gedung tumbuh/menyusut tiap poll. Set repeat per frame — murah,
+    // tanpa alokasi, tanpa popping (derivasi di applyFacadeRepeat).
+    applyFacadeRepeat(facade.map, facade.emissiveMap, facade.roughnessMap, currentHeight, width);
 
     // (a) L17 — lerp warna (faktor 0.03), tanpa alokasi. Target hanya di-parse
     // saat baseColor berubah (re-render oleh store), bukan per frame.
@@ -326,8 +343,8 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
             metalness={facadeParams.metalness}
             roughness={facadeParams.roughness}
             envMapIntensity={facadeParams.envMapIntensity}
-            transparent={avgGasUsed === 0}
-            opacity={avgGasUsed === 0 ? 0.6 : 1}
+            transparent={avgGasPrice === 0}
+            opacity={avgGasPrice === 0 ? 0.6 : 1}
           />
         </mesh>
 
@@ -356,8 +373,8 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
             metalness={0.25}
             roughness={0.55}
             envMapIntensity={0.5}
-            transparent={avgGasUsed === 0}
-            opacity={avgGasUsed === 0 ? 0.6 : 1}
+            transparent={avgGasPrice === 0}
+            opacity={avgGasPrice === 0 ? 0.6 : 1}
           />
         </mesh>
 
@@ -385,8 +402,8 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
             metalness={0.7}
             roughness={0.3}
             envMapIntensity={0.8}
-            transparent={avgGasUsed === 0}
-            opacity={avgGasUsed === 0 ? 0.6 : 1}
+            transparent={avgGasPrice === 0}
+            opacity={avgGasPrice === 0 ? 0.6 : 1}
           />
         </mesh>
 

@@ -9,7 +9,7 @@ import { getBuildingPosition, TX_TYPES_ORDERED, CITY_SCALE } from "./layout";
  *
  * Tujuan: 12 bangunan kota tampak seperti gedung dunia nyata (stylized-
  * realistic) TANPA mengubah semantik data:
- *   - Tinggi tower tetap = avgGasUsed (lerp 0.05/useFrame di GasBuilding)
+ *   - Tinggi tower = gauge avgGasPrice Gwei (lerp 0.05/useFrame di GasBuilding)
  *   - Lebar tetap = recentTxCount
  *   - Warna/emissive tetap = bracket avgGasPrice + pulse + hover/selected
  *
@@ -18,8 +18,11 @@ import { getBuildingPosition, TX_TYPES_ORDERED, CITY_SCALE } from "./layout";
  *      glass    — menara kaca modern (tirai kaca reflektif + spandel tipis)
  *      concrete — mid-rise beton, jendela rulek + garis lantai/balcony
  *      setback  — menara korporat 3 stack yang mengecil ke atas
- *   2. CanvasTexture albedo + emissive per TxType (dibuat SEKALI, di-cache);
- *      jendela menyala hangat acak via mulberry32 (seed per TxType).
+ *   2. CanvasTexture STRIP SATU lantai (albedo+emissive) per warna bracket
+ *      (cache ≤7 entri), di-tile berulang via texture.repeat yang di-set
+ *      dari tinggi lerp saat itu → jendela tetap ukuran fisik (~0.5 unit/
+ *      lantai) saat tinggi berubah dinamis tiap poll. Jendela warm/cool/off
+ *      deterministik via mulberry32 (seed per warna).
  *   3. Geometri tower = merge stack box (setback = 3 stack) — SATU mesh per
  *      tower → tetap 1 draw call. UV di-scale per stack agar modul jendela
  *      konsisten antar stack (baris lantai sejajar dunia).
@@ -44,11 +47,6 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-function txTypeIndex(txType: TxType): number {
-  const i = TX_TYPES_ORDERED.indexOf(txType);
-  return i === -1 ? 0 : i;
-}
-
 /* ==== 1. Arketipe arsitektur ============================================== */
 
 export type FacadeArchetype = "glass" | "concrete" | "setback";
@@ -62,10 +60,6 @@ interface StackSpec {
 
 interface ArchetypeDef {
   stacks: StackSpec[];
-  tileCols: number; // kolom jendela per tile tekstur
-  tileRows: number; // baris lantai per tile tekstur
-  floorsTotal: number; // jumlah lantai nominal bangunan (skala UV)
-  litRatio: number; // fraksi jendela menyala
   metalness: number;
   roughness: number;
   envMapIntensity: number;
@@ -73,15 +67,10 @@ interface ArchetypeDef {
 
 const ARCHETYPES: Record<FacadeArchetype, ArchetypeDef> = {
   // (a) Menara kaca modern — tirai kaca penuh, mullion tipis, reflektif.
-  // floorsTotal di-scale ×CITY_SCALE: jumlah LANTAI mengikuti tinggi gedung
-  // baru (maks 120 unit) sehingga tinggi satuan jendela/lantai di dunia
-  // tetap ~0.5 unit (skala ruang) — BUKAN ukuran jendela yang digandakan.
+  // Jumlah lantai TIDAK lagi ditentukan di sini: strip fasad di-tile dinamis
+  // (lihat section 2) — tinggi lantai dunia selalu ~0.5 unit.
   glass: {
     stacks: [{ w: 1, y0: 0, y1: 1 }],
-    tileCols: 6,
-    tileRows: 8,
-    floorsTotal: 16 * CITY_SCALE,
-    litRatio: 0.3,
     metalness: 0.6,
     roughness: 0.22,
     // Ethereal Glass: refleksi env di-restrain (~0.6-0.8) — kaca tetap hidup
@@ -91,10 +80,6 @@ const ARCHETYPES: Record<FacadeArchetype, ArchetypeDef> = {
   // (b) Mid-rise beton — jendela rulek kecil, dinding terekspos, garis lantai.
   concrete: {
     stacks: [{ w: 1, y0: 0, y1: 1 }],
-    tileCols: 5,
-    tileRows: 6,
-    floorsTotal: 12 * CITY_SCALE,
-    litRatio: 0.22,
     metalness: 0.08,
     roughness: 0.78,
     envMapIntensity: 0.5,
@@ -106,10 +91,6 @@ const ARCHETYPES: Record<FacadeArchetype, ArchetypeDef> = {
       { w: 0.78, y0: 0.55, y1: 0.82 },
       { w: 0.56, y0: 0.82, y1: 1 },
     ],
-    tileCols: 5,
-    tileRows: 6,
-    floorsTotal: 12 * CITY_SCALE,
-    litRatio: 0.26,
     metalness: 0.45,
     roughness: 0.4,
     envMapIntensity: 0.65,
@@ -157,7 +138,27 @@ export function getTopStackWidth(txType: TxType): number {
   return stacks[stacks.length - 1].w;
 }
 
-/* ==== 2. Tekstur fasad (albedo + emissive, cache per TxType) ============== */
+/* ==== 2. Tekstur fasad — STRIP SATU lantai, di-tile via repeat ============ */
+
+/**
+ * Driver tinggi kini DINAMIS: avgGasPrice (Gwei) berubah tiap poll → tinggi
+ * di-lerp 0.05/frame di GasBuilding. Tekstur lama men-generate seluruh sisi
+ * bangunan (240/180 lantai) per TxType → saat gedung menyusut ke 5–10 unit,
+ * ratusan baris jendela terpampat jadi garis-garis tak terlihat. Solusi:
+ * SATU canvas strip = SATU lantai, di-tile berulang (RepeatWrapping) dengan
+ * texture.repeat yang di-set dari tinggi/lebar LERP per frame (properti
+ * Texture — murah, tanpa alokasi/regenerasi canvas) → jendela selalu
+ * berukuran fisik ~FACADE_FLOOR_HEIGHT unit per lantai berapa pun tingginya.
+ */
+
+/** Tinggi fisik satu lantai di dunia (unit) — acuan jumlah baris jendela. */
+export const FACADE_FLOOR_HEIGHT = 0.5;
+/** Lebar fisik satu kolom jendela di dunia (unit). */
+export const FACADE_COLUMN_WIDTH = 0.5;
+/** Kolom jendela per tile strip canvas. */
+export const FACADE_STRIP_COLS = 6;
+/** Fraksi jendela menyala per strip (warisan arketipe glass). */
+const STRIP_LIT_RATIO = 0.3;
 
 export interface FacadeTextureSet {
   map: THREE.CanvasTexture;
@@ -166,12 +167,17 @@ export interface FacadeTextureSet {
   roughnessMap: THREE.CanvasTexture;
 }
 
-const TILE_SIZE = 256;
+/** Lebar canvas strip; tinggi = SATU lantai (rasio 4:1 → 6 kolom lega). */
+const STRIP_W = 256;
+const STRIP_H = 64;
 
-function makeCanvas(size: number): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
+function makeCanvas(
+  width: number,
+  height: number,
+): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
   const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
+  canvas.width = width;
+  canvas.height = height;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Canvas 2D tidak tersedia");
   return { canvas, ctx };
@@ -225,109 +231,67 @@ function drawLitWindow(
   emissive.fillRect(x, y, w, h);
 }
 
-function buildFacadeTextureSet(arch: FacadeArchetype, rnd: () => number): FacadeTextureSet {
-  const albedo = makeCanvas(TILE_SIZE);
-  const emissive = makeCanvas(TILE_SIZE);
+/** Hash hex → seed PRNG deterministik (pola jendela stabil antar render). */
+function colorSeed(hex: string): number {
+  let h = 0;
+  for (let i = 0; i < hex.length; i++) h = (h * 31 + hex.charCodeAt(i)) >>> 0;
+  return h;
+}
+
+/**
+ * Strip SATU lantai (albedo + emissive): dinding netral terang — warna
+ * bracket tetap datang dari material.color (multiply), jendela kaca biru
+ * gelap + pantulan langit, spandel gelap di tepi BAWAH strip (tetap di dalam
+ * batas canvas → tiling vertikal seamless). Jendela warm/cool/off
+ * deterministik via mulberry32(seed dari baseColor) — bangunan dengan warna
+ * bracket berbeda dapat pola jendela berbeda tanpa menaikkan jumlah cache.
+ */
+function buildFacadeStripTextures(baseColor: string): FacadeTextureSet {
+  const albedo = makeCanvas(STRIP_W, STRIP_H);
+  const emissive = makeCanvas(STRIP_W, STRIP_H);
   const a = albedo.ctx;
   const e = emissive.ctx;
-  const def = ARCHETYPES[arch];
-  const rowH = TILE_SIZE / def.tileRows;
-  const colW = TILE_SIZE / def.tileCols;
+  const rnd = mulberry32(colorSeed(baseColor));
+  const rowH = STRIP_H; // satu lantai per strip
+  const colW = STRIP_W / FACADE_STRIP_COLS;
 
   // Emissive mulai hitam total (dinding tidak memancarkan cahaya).
   e.fillStyle = "#000000";
-  e.fillRect(0, 0, TILE_SIZE, TILE_SIZE);
+  e.fillRect(0, 0, STRIP_W, STRIP_H);
 
-  if (arch === "glass") {
-    // Dinding/spandel abu terang — warna bracket bangunan terlihat via tint.
-    a.fillStyle = "#8a919b";
-    a.fillRect(0, 0, TILE_SIZE, TILE_SIZE);
-    for (let r = 0; r < def.tileRows; r++) {
-      const y0 = r * rowH;
-      // Spandel tipis di bawah tiap lantai (balcony line).
-      a.fillStyle = "#6f7681";
-      a.fillRect(0, y0 + rowH * 0.8, TILE_SIZE, rowH * 0.2 + 1);
-      for (let c = 0; c < def.tileCols; c++) {
-        const x = c * colW + 2;
-        const y = y0 + 2;
-        const w = colW - 4;
-        const h = rowH * 0.8 - 5;
-        // Kaca biru gelap dengan pantulan langit di atas pane.
-        const g = a.createLinearGradient(0, y, 0, y + h);
-        g.addColorStop(0, "#253a50");
-        g.addColorStop(0.5, "#111b27");
-        g.addColorStop(1, "#0b1119");
-        a.fillStyle = g;
-        a.fillRect(x, y, w, h);
-        a.fillStyle = "rgba(150,185,220,0.2)";
-        a.fillRect(x, y, w, h * 0.16);
-        if (rnd() < def.litRatio) drawLitWindow(a, e, x, y, w, h, rnd);
-      }
-    }
-  } else if (arch === "concrete") {
-    // Beton krem dengan noise halus (tekstur presisi kayu/beton).
-    a.fillStyle = "#b1a795";
-    a.fillRect(0, 0, TILE_SIZE, TILE_SIZE);
-    for (let i = 0; i < 80; i++) {
-      a.fillStyle = `rgba(0,0,0,${0.02 + rnd() * 0.05})`;
-      a.fillRect(rnd() * TILE_SIZE, rnd() * TILE_SIZE, 3 + rnd() * 12, 1 + rnd() * 3);
-    }
-    for (let r = 0; r < def.tileRows; r++) {
-      const y0 = r * rowH;
-      // Garis lantai/balcony tipis.
-      a.fillStyle = "#95897a";
-      a.fillRect(0, y0 + rowH * 0.8, TILE_SIZE, 2.5);
-      for (let c = 0; c < def.tileCols; c++) {
-        // Jendela rulek — hanya ~50% lebar sel, sisanya dinding terekspos.
-        const x = c * colW + colW * 0.25;
-        const y = y0 + rowH * 0.16;
-        const w = colW * 0.5;
-        const h = rowH * 0.52;
-        const g = a.createLinearGradient(0, y, 0, y + h);
-        g.addColorStop(0, "#1e2b38");
-        g.addColorStop(1, "#0e161f");
-        a.fillStyle = g;
-        a.fillRect(x, y, w, h);
-        a.fillStyle = "rgba(165,195,225,0.28)";
-        a.fillRect(x, y, w, h * 0.35);
-        // Ambang jendela.
-        a.fillStyle = "#8b8172";
-        a.fillRect(x - 2, y + h, w + 4, 3);
-        if (rnd() < def.litRatio) drawLitWindow(a, e, x, y, w, h, rnd);
-      }
-    }
-  } else {
-    // setback — ribbon kaca kontinu + spandel tebal + pilaster vertikal.
-    a.fillStyle = "#7a8089";
-    a.fillRect(0, 0, TILE_SIZE, TILE_SIZE);
-    for (let r = 0; r < def.tileRows; r++) {
-      const y0 = r * rowH;
-      a.fillStyle = "#61666d";
-      a.fillRect(0, y0 + rowH * 0.68, TILE_SIZE, rowH * 0.32 + 1);
-      const y = y0 + rowH * 0.12;
-      const h = rowH * 0.5;
-      const g = a.createLinearGradient(0, y, 0, y + h);
-      g.addColorStop(0, "#1d2a37");
-      g.addColorStop(1, "#0d141c");
-      a.fillStyle = g;
-      a.fillRect(2, y, TILE_SIZE - 4, h);
-      a.fillStyle = "rgba(150,180,215,0.2)";
-      a.fillRect(2, y, TILE_SIZE - 4, h * 0.3);
-      for (let c = 0; c < def.tileCols; c++) {
-        const x = c * colW + 2.5;
-        const w = colW - 5;
-        if (rnd() < def.litRatio) drawLitWindow(a, e, x, y + 1.5, w, h - 3, rnd);
-        // Pilaster memecah ribbon (digambar terakhir agar di atas kaca).
-        a.fillStyle = "#6d737b";
-        a.fillRect(c * colW - 1.5, y, 3, h);
-      }
-    }
+  // Dinding/spandel-dasar abu terang — tint bracket terlihat via material.color.
+  a.fillStyle = "#8a919b";
+  a.fillRect(0, 0, STRIP_W, STRIP_H);
+  // Grain halus (deterministik) agar dinding tidak flat.
+  for (let i = 0; i < 24; i++) {
+    a.fillStyle = `rgba(0,0,0,${0.02 + rnd() * 0.04})`;
+    a.fillRect(rnd() * STRIP_W, rnd() * STRIP_H, 3 + rnd() * 10, 1 + rnd() * 2);
+  }
+  // Spandel tipis di bawah lantai (balcony line) — 20% bawah strip.
+  a.fillStyle = "#6f7681";
+  a.fillRect(0, rowH * 0.8, STRIP_W, rowH * 0.2 + 1);
+
+  for (let c = 0; c < FACADE_STRIP_COLS; c++) {
+    const x = c * colW + 2;
+    const y = 2;
+    const w = colW - 4;
+    const h = rowH * 0.8 - 5;
+    // Kaca biru gelap dengan pantulan langit di atas pane.
+    const g = a.createLinearGradient(0, y, 0, y + h);
+    g.addColorStop(0, "#253a50");
+    g.addColorStop(0.5, "#111b27");
+    g.addColorStop(1, "#0b1119");
+    a.fillStyle = g;
+    a.fillRect(x, y, w, h);
+    a.fillStyle = "rgba(150,185,220,0.2)";
+    a.fillRect(x, y, w, h * 0.16);
+    if (rnd() < STRIP_LIT_RATIO) drawLitWindow(a, e, x, y, w, h, rnd);
   }
 
   return {
     map: toTexture(albedo.canvas, true),
     emissiveMap: toTexture(emissive.canvas, true),
-    roughnessMap: toDataTexture(buildRoughnessCanvas(arch, rnd)),
+    roughnessMap: getFacadeRoughness(),
   };
 }
 
@@ -337,7 +301,7 @@ function buildFacadeTextureSet(arch: FacadeArchetype, rnd: () => number): Facade
  * cuapan vertikal khas fasad cuakan. */
 function buildRoughnessCanvas(arch: FacadeArchetype, rnd: () => number): HTMLCanvasElement {
   const S = 128;
-  const { canvas, ctx } = makeCanvas(S);
+  const { canvas, ctx } = makeCanvas(S, S);
   // Base per arketipe (0-255 ≈ roughness 0-1 pasca-kali material.roughness).
   const base = arch === "glass" ? 214 : arch === "concrete" ? 235 : 226;
   ctx.fillStyle = `rgb(${base},${base},${base})`;
@@ -365,17 +329,63 @@ function buildRoughnessCanvas(arch: FacadeArchetype, rnd: () => number): HTMLCan
   return canvas;
 }
 
-/** Cache tekstur fasad — dibuat SEKALI per TxType (bukan per render). */
-const facadeTextureCache = new Map<TxType, FacadeTextureSet>();
+/** Cache master strip per warna bracket (maks ~7 entri: 6 warna GAS_BRACKETS
+ * + 1 idle "#333344"). Kunci = baseColor (bukan TxType, bukan bucket lantai):
+ * pattern jendela deterministik per warna, jumlah canvas tetap terbatas. */
+const facadeTextureCache = new Map<string, FacadeTextureSet>();
 
-export function getFacadeTextures(txType: TxType): FacadeTextureSet {
-  const cached = facadeTextureCache.get(txType);
-  if (cached) return cached;
-  const arch = getFacadeArchetype(txType);
-  const rnd = mulberry32(1000 + txTypeIndex(txType) * 127);
-  const set = buildFacadeTextureSet(arch, rnd);
-  facadeTextureCache.set(txType, set);
-  return set;
+/** Roughness noise bersama (achromatic, sifatnya netral) — cukup SATU untuk
+ * seluruh kota; tiap bangunan meng-clone dengan repeat transform sendiri. */
+let sharedFacadeRoughness: THREE.CanvasTexture | null = null;
+
+function getFacadeRoughness(): THREE.CanvasTexture {
+  if (!sharedFacadeRoughness) {
+    sharedFacadeRoughness = toDataTexture(buildRoughnessCanvas("glass", mulberry32(4242)));
+  }
+  return sharedFacadeRoughness;
+}
+
+/**
+ * Tekstur fasad untuk SATU bangunan — dipanggil dengan baseColor (warna
+ * bracket hasil getColorForGasPrice). Master di-cache per warna; yang
+ * dikembalikan CLONE per pemanggil: repeat/offset adalah properti Texture
+ * (bukan material) dan tiap bangunan butuh transform sendiri karena tinggi
+ * lerp-nya berbeda. Clone berbagi `source` GPU (three r131+) — upload canvas
+ * tetap sekali per warna; pemanggil wajib .dispose() clone saat berganti.
+ */
+export function getFacadeTextures(baseColor: string): FacadeTextureSet {
+  let master = facadeTextureCache.get(baseColor);
+  if (!master) {
+    master = buildFacadeStripTextures(baseColor);
+    facadeTextureCache.set(baseColor, master);
+  }
+  return {
+    map: master.map.clone(),
+    emissiveMap: master.emissiveMap.clone(),
+    roughnessMap: master.roughnessMap.clone(),
+  };
+}
+
+/**
+ * Set texture.repeat tile fasad dari dimensi dunia bangunan (nilai LERP
+ * saat itu) — dipanggil GasBuilding per frame, nol alokasi. Derivasi:
+ * UV tower = unit-space × UV_FLOORS_PER_UNIT; strip berisi 1 lantai &
+ * FACADE_STRIP_COLS kolom per tile → repeat.y = (height/FLOOR)/UV_K dan
+ * repeat.x = (width/COL)/(STRIP_COLS×UV_K). Faktor lebar stack (s.w) di UV
+ * membatalkan dirinya → SATU repeat berlaku benar untuk semua stack setback.
+ */
+export function applyFacadeRepeat(
+  map: THREE.Texture,
+  emissiveMap: THREE.Texture,
+  roughnessMap: THREE.Texture,
+  heightUnits: number,
+  widthUnits: number,
+): void {
+  const repY = heightUnits / (FACADE_FLOOR_HEIGHT * UV_FLOORS_PER_UNIT);
+  const repX = widthUnits / (FACADE_COLUMN_WIDTH * FACADE_STRIP_COLS * UV_FLOORS_PER_UNIT);
+  map.repeat.set(repX, repY);
+  emissiveMap.repeat.set(repX, repY);
+  roughnessMap.repeat.set(repX, repY);
 }
 
 /* ==== 3. Geometri tower (merge stack, 1 draw call) ======================== */
@@ -426,6 +436,14 @@ const towerGeometryCache = new Map<TxType, THREE.BufferGeometry>();
 const TOWER_HEIGHT_SEGMENTS = 4;
 
 /**
+ * Kerapatan UV vertikal tower: "lantai-UV" per unit tinggi ruang-lokal.
+ * Warisan rumus lama floorsTotal/tileRows = 30 untuk SEMUA arketipe
+ * (240/8 dan 180/6) — dipertahankan agar cache geometri identik. Jumlah
+ * lantai DUNIA kini dikendalikan texture.repeat (section 2), bukan UV statis.
+ */
+const UV_FLOORS_PER_UNIT = 30;
+
+/**
  * Tower utuh (semua stack setback) sebagai SATU geometri, ruang lokal
  * y ∈ [-0.5, 0.5] — konsisten dengan body unit lama (group origin = dasar).
  * UV samping di-scale per stack: baris jendela tetap sejajar antar stack
@@ -443,7 +461,7 @@ export function getTowerGeometry(txType: TxType): THREE.BufferGeometry {
 
   const arch = getFacadeArchetype(txType);
   const def = ARCHETYPES[arch];
-  const k = def.floorsTotal / def.tileRows; // tile vertikal per bangunan
+  const k = UV_FLOORS_PER_UNIT; // kerapatan UV; lantai dunia via texture.repeat
   const HS = TOWER_HEIGHT_SEGMENTS;
 
   const parts = def.stacks.map((s) => {
