@@ -451,3 +451,41 @@ Visual polish, error handling, dokumentasi, dan deployment.
 | 6 | Interaktif | Hover, klik, navigasi kamera, tabel↔3D sync |
 | 7 | Responsif | Berfungsi di desktop, tablet, mobile |
 | 8 | Error resilient | Tidak crash saat RPC down / rate limited |
+
+---
+
+## Fase 6 — Data 24/7 via git-scraping (pasca-rilis)
+
+### Tujuan
+Riwayat gas 24 jam tetap terkumpul meski tidak ada pengunjung (SPA statis: polling RPC hanya hidup saat browser terbuka). Solusi: GitHub Actions menjalankan collector Bun tiap ±5 menit dan commit snapshot agregat ke `data/snapshots.json`.
+
+### Checklist
+
+#### 6.1 Collector (script Bun)
+- [x] `scripts/collect-snapshot.ts` — viem `createPublicClient` langsung di script (TANPA import `rpc-client`/`chain` yang memakai `import.meta.env`)
+- [x] Window ±30 block terakhir (block time 100 ms), receipts via `eth_getBlockReceipts` + fallback per-tx
+- [x] Klasifikasi 4 kategori + agregasi: `aggregateSnapshot()` di `src/data/snapshot-aggregate.ts` (modul murni — single source script/FE/test)
+- [x] Network: `gasPriceGwei` (eth_gasPrice), `tps` = totalTx / (jumlah block × block time), `lastBlockNumber`, timestamp ISO UTC
+- [x] `mergeSnapshots()`: append + dedupe by block + buang > 24 jam + cap 288 titik; tulis JSON minify
+- [x] **Fail-safe**: RPC gagal → exit non-zero TANPA menulis file (riwayat tidak pernah ditimpa kosong)
+
+#### 6.2 Workflow GitHub Actions
+- [x] `.github/workflows/collect.yml` — `schedule: cron '*/5 * * * *'` + `workflow_dispatch`, `permissions: contents: write`
+- [x] Runner ubuntu, `oven-sh/setup-bun@v2`, `bun install --frozen-lockfile`
+- [x] Commit-push `data/snapshots.json` sebagai `github-actions[bot]`, message `chore(data): snapshot 24j [skip ci]` (anti-loop)
+- [x] `concurrency: collect-snapshot` — run berikutnya antre, tidak tumpang tindih
+- [x] **WAJIB**: pastikan Actions enabled di repo (Settings → Actions → General) + jalankan sekali manual untuk verifikasi
+- [~] Verifikasi cron hidup 24 jam — perlu observasi setelah merge (cron GitHub best-effort, bisa telat ±5-10 menit saat runner padat)
+
+#### 6.3 Frontend integrasi
+- [x] `src/data/history-client.ts` — `fetchGasHistory()` (cache-bust, timeout 8s, fail-open → null) + `parseSnapshots()` (validasi shape murni, entry rusak di-skip)
+- [x] `src/store/gas-store.ts` — action `seedFromSnapshot()` (guard: hanya saat `isCollecting === false` & metrics masih kosong — data live tidak pernah tertimpa)
+- [x] `src/App.tsx` — hydrate saat mount + refresh tiap 5 menit; loop live (`startCollecting`) tidak ditunda/diganggu
+- [x] `src/ui/GasHistoryChart.tsx` — SVG hand-rolled (tanpa dep): line+area gradient 12%, grid hairline, 4-6 label WIB, titik nilai terakhir + nilai kini live; judul "GAS PRICE · 24 JAM"; responsif via ResizeObserver
+- [x] Mount di `Dashboard.tsx` — full-width row di bawah baris stat
+
+#### 6.4 Verifikasi
+- [x] Collector dijalankan 2× lokal → snapshot valid, tidak duplikat (dedupe by block)
+- [x] `bun run test` — 120 passing (termasuk parse/aggregate/merge)
+- [x] `bun run build` + `bun run preview` → GET / 200
+- [~] Data 24 jam penuh (288 titik) — butuh ±24 jam setelah Actions aktif di repo

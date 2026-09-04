@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { TxType, type ClassifiedTransaction } from '@/data/tx-classifier'
+import type { GasSnapshot } from '@/data/snapshot-aggregate'
 import { weiToGwei, weiToEth } from '@/utils/gas-math'
 import { ROBINHOOD_CHAIN } from '@/config/chain'
 
@@ -58,6 +59,11 @@ export interface GasStore {
   setEthUsdPrice: (price: number | null) => void
   setBlockscoutGasPrice: (gwei: number | null) => void
   clearRecentTxs: () => void
+  /**
+   * Hydrate dari snapshot git-scraper 24 jam (lihat data/snapshots.json).
+   * HANYA menulis saat store masih kosong — tidak pernah menimpa data live.
+   */
+  seedFromSnapshot: (snapshot: GasSnapshot) => void
 }
 
 function parseMaxRecentTxs(raw: string | undefined): number {
@@ -222,4 +228,53 @@ export const useGasStore = create<GasStore>((set, get) => ({
     set({ blockscoutGasPrice: gwei })
   },
   clearRecentTxs: () => set({ recentTxs: [] }),
+
+  /**
+   * Hydrate store dari snapshot git-scraper 24 jam (data/snapshots.json —
+   * di-commit GitHub Actions tiap ±5 menit, lihat .github/workflows/collect.yml).
+   * Tujuan: saat situs baru dibuka, UI & grafik tidak mulai dari kosong.
+   *
+   * Guard anti-timpa (audit C1): seed HANYA berjalan bila (a) live-polling
+   * belum jalan (isCollecting === false) dan (b) metrics masih kosong (semua
+   * avgGasPrice 0). Kalau data live sudah ada, snapshot riwayat diabaikan.
+   */
+  seedFromSnapshot: (snapshot) => {
+    const { isCollecting, gasMetrics, networkStats } = get()
+    if (isCollecting) return
+
+    const isEmpty = Array.from(gasMetrics.values()).every((m) => m.avgGasPrice === 0)
+    if (!isEmpty) return
+
+    const seededMetrics = new Map(gasMetrics)
+    for (const [type, metric] of seededMetrics) {
+      const cat = snapshot.categories[type]
+      if (!cat) continue // kategori tak ada di snapshot → biarkan nilai awal
+      seededMetrics.set(type, {
+        ...metric,
+        avgGasUsed: cat.avgGasUsed,
+        avgGasPrice: cat.avgGasPrice,
+        minGasPrice: cat.minGasPrice,
+        maxGasPrice: cat.maxGasPrice,
+        totalTxCount: cat.totalTxCount,
+        // recentTxCount = window live — riwayat bukan data live, biarkan 0.
+        recentTxCount: 0,
+        totalFeeEth: cat.totalFeeEth,
+        // trend = metrik real-time — snapshot statis selalu 'stable'.
+        trend: 'stable',
+      })
+    }
+
+    set({
+      gasMetrics: seededMetrics,
+      networkStats: {
+        ...networkStats,
+        currentGasPrice: snapshot.gasPriceGwei,
+        tps: snapshot.tps,
+        lastBlockNumber: snapshot.block,
+        // totalTransactions ikut di-seed: Dashboard memakai ini sebagai
+        // penanda hasData — tanpa ini stats ter-seed tetap tampil "—".
+        totalTransactions: Object.values(snapshot.categories).reduce((sum, cat) => sum + cat.totalTxCount, 0),
+      },
+    })
+  },
 }))

@@ -1,6 +1,7 @@
 import { Canvas } from "@react-three/fiber";
 import { Suspense, useEffect, useState, Component, type ReactNode } from "react";
 import { startCollecting, stopCollecting } from "@/data/gas-collector";
+import { fetchGasHistory } from "@/data/history-client";
 import { useGasStore } from "@/store/gas-store";
 import { World } from "@/scene/World";
 import { GasCity } from "@/scene/GasCity";
@@ -361,6 +362,26 @@ export default function App() {
   useEffect(() => {
     startCollecting();
     return () => stopCollecting();
+  }, []);
+
+  // 4.8 — Hydrate riwayat 24 jam dari snapshot git-scraper (data/snapshots.json).
+  // TIDAK BOLEH menunda/menggagalkan loop live: fetch berjalan paralel,
+  // kegagalan apa pun → null → diabaikan (fail-open). Seed hanya menempel
+  // kalau store masih kosong (guard di seedFromSnapshot). Refresh tiap 5 menit
+  // — sejalan dengan cadence collector GitHub Actions.
+  useEffect(() => {
+    let cancelled = false;
+    const hydrate = async () => {
+      const file = await fetchGasHistory();
+      if (cancelled || !file || file.snapshots.length === 0) return;
+      useGasStore.getState().seedFromSnapshot(file.snapshots[file.snapshots.length - 1]);
+    };
+    hydrate();
+    const interval = setInterval(hydrate, 5 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, []);
 
   // Still checking WebGL

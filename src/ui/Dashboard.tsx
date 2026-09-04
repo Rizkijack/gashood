@@ -1,6 +1,7 @@
 import { useGasStore } from "@/store/gas-store";
 import { formatBlockNumber, formatEth, formatGasPrice, formatNumber, formatUsd } from "@/utils/format";
 import { ethToUsd } from "@/utils/gas-math";
+import { GasHistoryChart } from "@/ui/GasHistoryChart";
 
 const styles: Record<string, React.CSSProperties> = {
   bar: {
@@ -134,6 +135,12 @@ export function Dashboard() {
             <div style={styles.statValue}>{formatUsd(ethUsdPrice)}</div>
           </div>
         )}
+
+        {/* 4.7 — Grafik riwayat 24 jam: full-width row di bawah baris stat
+            (flexBasis 100% memaksa wrap ke baris baru pada bar yang wrap). */}
+        <div style={{ flexBasis: "100%", minWidth: 0, padding: "2px 0 4px" }}>
+          <GasHistoryChart />
+        </div>
       </div>
     </div>
   );

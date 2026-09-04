@@ -102,6 +102,9 @@ VITE_POLLING_INTERVAL=3000
 
 # Max recent transactions in ring buffer (default: 200)
 VITE_MAX_RECENT_TXS=200
+
+# Snapshot URL riwayat 24 jam (optional — default: raw GitHub main)
+VITE_SNAPSHOT_URL=https://raw.githubusercontent.com/Rizkijack/gashood/main/data/snapshots.json
 ```
 
 ---
@@ -116,7 +119,9 @@ src/
 │   ├── rpc-client.ts         # Viem public client (getBlock, getReceipt, batchGet)
 │   ├── blockscout-client.ts  # Blockscout REST API (stats, transactions, summary)
 │   ├── tx-classifier.ts      # 12 TxType + 22 method signatures + classify()
-│   └── gas-collector.ts      # Polling orchestrator (adaptive interval, retry)
+│   ├── gas-collector.ts      # Polling orchestrator (adaptive interval, retry)
+│   ├── snapshot-aggregate.ts # Modul murni snapshot 24 jam (aggregate, merge) — shared script/FE
+│   └── history-client.ts     # Fetch + parse data/snapshots.json (fail-open → null)
 ├── store/
 │   └── gas-store.ts          # Zustand (gasMetrics, recentTxs, networkStats, uiState)
 ├── scene/
@@ -137,6 +142,7 @@ src/
 │   ├── LoadingScreen.tsx      # Loading saat aset 3D dimuat / menunggu data pertama (give-up 15s)
 │   ├── ErrorToast.tsx         # Error RPC → toast generik + dismiss (tidak bocorkan detail internal)
 │   ├── DetailPanel.tsx       # Slide-in panel (min/avg/max gas, recent txs)
+│   ├── GasHistoryChart.tsx   # Grafik gas 24 jam (SVG hand-rolled, WIB)
 │   └── tx-theme.ts           # Shared colors, labels, gas brackets
 ├── utils/
 │   ├── gas-math.ts           # calculateTotalFee, weiToGwei, weiToEth
@@ -152,8 +158,8 @@ src/
 
 ```
 Robinhood RPC → rpc-client → gas-collector → gas-store → 3D Scene + 2D Overlay
-                    ↓
-              tx-classifier (12 TxType)
+                     ↓
+               tx-classifier (12 TxType)
 ```
 
 1. **gas-collector** polls `eth_getBlockByNumber` every 2-5s
@@ -162,6 +168,31 @@ Robinhood RPC → rpc-client → gas-collector → gas-store → 3D Scene + 2D O
 4. **gas-store** aggregates metrics (avg, min, max, count, trend)
 5. **3D Scene** reacts: building heights animate, particles spawn, river speeds up, sky shifts
 6. **2D Overlay** updates: dashboard stats, table re-sorts, feed prepends
+
+---
+
+## Data 24/7 (git-scraping)
+
+Situs ini SPA statis — polling RPC hanya berjalan saat browser terbuka. Agar grafik **riwayat 24 jam** tetap terisi 24/7, GitHub Actions menjalankan **git-scraper** secara periodik dan commit hasilnya ke repo:
+
+```
+GitHub Actions (cron ±5 menit)
+  └─ bun scripts/collect-snapshot.ts   → ambil ~30 block terakhir via RPC
+       └─ klasifikasi 4 kategori + agregasi (avg/min/max/count/fee, gas price, TPS)
+            └─ append data/snapshots.json (dedupe by block, buang > 24 jam, cap 288 titik)
+                 └─ commit "chore(data): snapshot 24j [skip ci]" oleh github-actions[bot]
+
+Browser (situs dibuka)
+  └─ src/data/history-client.ts → fetch raw data/snapshots.json (cache-bust, timeout 8s)
+       └─ parse → seedFromSnapshot() (hanya jika store masih kosong — data live tetap prioritas)
+            └─ src/ui/GasHistoryChart.tsx → grafik "GAS PRICE · 24 JAM" (SVG, label WIB)
+```
+
+- **Cara kerja**: satu snapshot = window ±30 block terakhir (~beberapa detik, block time 100 ms). Titik diambil tiap ±5 menit → rolling 24 jam ≈ 288 titik maks.
+- **Aktifkan Actions di repo**: Settings → Actions → General → pilih *Allow all actions* / pastikan workflows tidak di-disable. Jalankan sekali manual (Actions → *Collect gas snapshots* → *Run workflow*) untuk memastikan runner berjalan.
+- **Cron GitHub bersifat best-effort**: eksekusi bisa telat beberapa menit saat antrean runner padat → granularitas efektif ±5-10 menit, tetap cukup untuk grafik 24 jam.
+- **Fail-safe**: kegagalan RPC membuat collector exit non-zero **tanpa menulis** file — riwayat lama tidak pernah ditimpa kosong.
+- Override URL snapshot via `VITE_SNAPSHOT_URL` (default: raw GitHub `main`).
 
 ---
 
