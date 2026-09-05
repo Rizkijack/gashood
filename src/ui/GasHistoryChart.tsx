@@ -1,7 +1,7 @@
 /**
  * 4.7 — Grafik riwayat harga gas 24 jam (SVG hand-rolled, TANPA dependency
  * chart). Data dari file snapshot git-scraper (data/snapshots.json, di-commit
- * GitHub Actions tiap ±5 menit) — fetch sendiri + state lokal, sengaja TIDAK
+ * GitHub Actions tiap ±1 jam) — fetch sendiri + state lokal, sengaja TIDAK
  * lewat store agar alur riwayat terpisah dari data live (simple).
  *
  * Gaya Ethereal Glass: stroke tipis, gradient fill 12% opacity, grid hairline,
@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from "react";
 import { fetchGasHistory, type GasSnapshot } from "@/data/history-client";
 import { useGasStore } from "@/store/gas-store";
 
-const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // sama dengan cadence collector (±5 menit)
+const REFRESH_INTERVAL_MS = 10 * 60 * 1000; // sumber riwayat ±1 jam → refresh 10 menit cukup
 const HEIGHT = 150;
 const PAD = { top: 12, right: 16, bottom: 24, left: 52 };
 const STROKE = "#00CCFF";
@@ -69,7 +69,7 @@ export function GasHistoryChart() {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(600);
 
-  // Fetch riwayat saat mount + refresh tiap 5 menit (sejalan cadence Actions).
+  // Fetch riwayat saat mount + refresh berkala (sejalan cadence Actions ±1 jam).
   useEffect(() => {
     let cancelled = false;
     const load = () => {
@@ -103,7 +103,7 @@ export function GasHistoryChart() {
       <div ref={wrapRef} style={styles.wrap}>
         <div style={styles.title}>GAS PRICE · 24 JAM</div>
         <div style={styles.empty}>
-          {snapshots === null ? "Memuat riwayat gas…" : "Riwayat belum cukup — menunggu snapshot berikutnya (±5 menit)"}
+          {snapshots === null ? "Memuat riwayat gas…" : "Riwayat belum cukup — menunggu snapshot berikutnya (±1 jam)"}
         </div>
       </div>
     );
@@ -151,7 +151,7 @@ export function GasHistoryChart() {
     <div ref={wrapRef} style={styles.wrap}>
       <div style={styles.header}>
         <div style={styles.title}>GAS PRICE · 24 JAM</div>
-        <div style={styles.hint}>WIB · snapshot ±5 menit</div>
+        <div style={styles.hint}>WIB · snapshot ±1 jam</div>
       </div>
       <svg width="100%" height={HEIGHT} viewBox={`0 0 ${width} ${HEIGHT}`} role="img" aria-label="Riwayat harga gas 24 jam">
         <defs>

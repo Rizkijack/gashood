@@ -30,7 +30,7 @@ export interface CategoryAggregate {
   totalFeeEth: number
 }
 
-/** Satu titik snapshot (window ~30 block ≈ beberapa detik, diambil tiap ±5 menit). */
+/** Satu titik snapshot (window ~30 block ≈ beberapa detik, diambil tiap ±1 jam). */
 export interface GasSnapshot {
   /** Waktu snapshot, ISO UTC (mis. "2026-09-05T08:15:00.000Z"). */
   t: string
@@ -43,14 +43,15 @@ export interface GasSnapshot {
   categories: Record<TxType, CategoryAggregate>
 }
 
-/** Bentuk file `data/snapshots.json` (rolling 24 jam, ±288 titik). */
+/** Bentuk file `data/snapshots.json` (rolling 24 jam; cadence ±1 jam → ±24 titik). */
 export interface SnapshotFile {
   version: 1
   updatedAt: string
   snapshots: GasSnapshot[]
 }
 
-/** Batas retensi riwayat: 288 titik × 5 menit ≈ 24 jam. */
+/** Batas CAP keamanan riwayat (dulu 288 × 5 menit ≈ 24 jam; kini ±1 jam →
+ * hanya ~24 titik/24 jam — 288 tetap bertahan sebagai batas atas yang aman). */
 export const MAX_SNAPSHOTS = 288
 /** Umur maksimum snapshot yang dipertahankan (24 jam, ms). */
 export const RETENTION_MS = 24 * 60 * 60 * 1000
@@ -87,8 +88,8 @@ export function aggregateSnapshot(input: AggregateSnapshotInput): GasSnapshot {
     Object.values(TxType).map((type) => [type, emptyCategory()]),
   ) as Record<TxType, CategoryAggregate>
 
-  // Akumulator harga per kategori — avg hanya dari tx ber-harga (> 0).
-  const priceAcc = new Map<TxType, { sum: number; count: number }>()
+  // Akumulator harga per kategori — avg/min/max hanya dari tx ber-harga (> 0).
+  const priceAcc = new Map<TxType, { sum: number; count: number; min: number; max: number }>()
   const gasUsedAcc = new Map<TxType, { sum: number; count: number }>()
 
   for (const tx of txs) {
@@ -106,9 +107,11 @@ export function aggregateSnapshot(input: AggregateSnapshotInput): GasSnapshot {
 
     const priceGwei = weiToGwei(tx.effectiveGasPrice)
     if (priceGwei > 0) {
-      const acc = priceAcc.get(tx.txType) ?? { sum: 0, count: 0 }
+      const acc = priceAcc.get(tx.txType) ?? { sum: 0, count: 0, min: Infinity, max: -Infinity }
       acc.sum += priceGwei
       acc.count += 1
+      if (priceGwei < acc.min) acc.min = priceGwei
+      if (priceGwei > acc.max) acc.max = priceGwei
       priceAcc.set(tx.txType, acc)
     }
   }
@@ -119,15 +122,9 @@ export function aggregateSnapshot(input: AggregateSnapshotInput): GasSnapshot {
     const prices = priceAcc.get(type)
     const gas = gasUsedAcc.get(type)
     if (prices && prices.count > 0) {
-      const list: number[] = []
-      for (const tx of txs) {
-        if (tx.txType !== type) continue
-        const p = weiToGwei(tx.effectiveGasPrice)
-        if (p > 0) list.push(p)
-      }
       cat.avgGasPrice = prices.sum / prices.count
-      cat.minGasPrice = Math.min(...list)
-      cat.maxGasPrice = Math.max(...list)
+      cat.minGasPrice = prices.min
+      cat.maxGasPrice = prices.max
     }
     if (gas && gas.count > 0) {
       cat.avgGasUsed = gas.sum / gas.count

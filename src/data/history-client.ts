@@ -1,7 +1,7 @@
 /**
  * Klien riwayat 24 jam (git-scraping): baca file snapshot agregat
  * `data/snapshots.json` yang di-commit otomatis oleh GitHub Actions
- * (lihat .github/workflows/collect.yml) tiap ±5 menit.
+ * (lihat .github/workflows/collect.yml) tiap ±1 jam.
  *
  * Kontrak fail-open: kegagalan apa pun (fetch, timeout, shape rusak) → null —
  * situs tetap hidup TANPA riwayat; live-polling RPC tidak terpengaruh.

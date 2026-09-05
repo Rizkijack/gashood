@@ -1,6 +1,6 @@
 /**
  * Git-scraper snapshot gas 24 jam — dijalankan Bun, dipanggil GitHub Actions
- * tiap ±5 menit (lihat .github/workflows/collect.yml).
+ * tiap ±1 jam (lihat .github/workflows/collect.yml).
  *
  *   bun scripts/collect-snapshot.ts        (RPC default Robinhood mainnet)
  *   RPC_URL=... bun scripts/collect-snapshot.ts

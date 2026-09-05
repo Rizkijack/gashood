@@ -59,24 +59,31 @@ export function getBuildingPosition(txType: TxType): [number, number, number] {
  */
 export const HEIGHT_UNITS_PER_GWEI = 50 / 4.5;
 
-/** Idle/tidak ada data harga (avgGasPrice 0/NaN/negatif) — 7.5 unit,
- * kesinambungan dengan lantai terendah sistem fasad lama. */
+/** Gedung idle/tidak ada data harga (avgGasPrice 0/NaN/negatif) — 7.5 unit.
+ * Sekaligus titik anchor bawah gauge: gas 0.1 Gwei dipetakan ke nilai ini
+ * (lihat GAS_ANCHOR_GWEI). */
 export const MIN_BUILDING_HEIGHT = 7.5;
 
-/** Batas atas 150 unit ≈ 675 m @ ~13.5 Gwei — headroom jelas di atas rentang
- * gas price normal, spike ekstrem tetap terbaca tanpa menembus langit. */
+/** Batas atas 150 unit ≈ 675 m — headroom jelas untuk spike ekstrem. */
 export const MAX_BUILDING_HEIGHT = 150;
+
+/** Gas price (Gwei) yang dipetakan ke MIN_BUILDING_HEIGHT. Re-anchor ke range
+ * nyata Robinhood (gas typ ~0.1–0.5 Gwei, bukan rentang Ethereum mainnet 10–50
+ * Gwei) agar skyline tidak rata ter-patok di floor selama harga normal. Di atas
+ * anchor, tinggi naik linear @ HEIGHT_UNITS_PER_GWEI. */
+export const GAS_ANCHOR_GWEI = 0.1;
 
 /**
  * Tinggi gedung (world units) dari avgGasPrice (Gwei) — SATU sumber rumus.
- * Tinggi = gauge gas price real-time; sumber nilai = Blockscout gas tracker
- * (sudah ter-wire ke store). GasBuilding (visual) & GasParticles (spawn)
- * WAJIB import fungsi ini — jangan duplikasi angka (divergensi dulu pernah
- * membuat partikel spawn di dalam menara).
+ * Re-anchor: 0.1 Gwei → MIN_BUILDING_HEIGHT, naik linear (slope = 1 Gwei per
+ * HEIGHT_UNITS_PER_GWEI ≈ 50 m), clamp ke [MIN, MAX]. Sumber nilai = Blockscout
+ * gas tracker (sudah ter-wire ke store). GasBuilding (visual) & GasParticles
+ * (spawn) WAJIB import fungsi ini — jangan duplikasi angka (divergensi dulu
+ * pernah membuat partikel spawn di dalam menara).
  */
 export function buildingHeight(avgGasPriceGwei: number): number {
   // Input invalid (NaN) atau ≤ 0 → MIN (NaN gagal semua perbandingan numerik).
   if (!(avgGasPriceGwei > 0)) return MIN_BUILDING_HEIGHT;
-  const raw = avgGasPriceGwei * HEIGHT_UNITS_PER_GWEI;
+  const raw = MIN_BUILDING_HEIGHT + (avgGasPriceGwei - GAS_ANCHOR_GWEI) * HEIGHT_UNITS_PER_GWEI;
   return Math.min(Math.max(raw, MIN_BUILDING_HEIGHT), MAX_BUILDING_HEIGHT);
 }

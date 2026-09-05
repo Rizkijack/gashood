@@ -231,18 +231,28 @@ export const useGasStore = create<GasStore>((set, get) => ({
 
   /**
    * Hydrate store dari snapshot git-scraper 24 jam (data/snapshots.json —
-   * di-commit GitHub Actions tiap ±5 menit, lihat .github/workflows/collect.yml).
+   * di-commit GitHub Actions tiap ±1 jam, lihat .github/workflows/collect.yml).
    * Tujuan: saat situs baru dibuka, UI & grafik tidak mulai dari kosong.
    *
-   * Guard anti-timpa (audit C1): seed HANYA berjalan bila (a) live-polling
-   * belum jalan (isCollecting === false) dan (b) metrics masih kosong (semua
-   * avgGasPrice 0). Kalau data live sudah ada, snapshot riwayat diabaikan.
+   * Guard anti-timpa (audit C1): seed HANYA berjalan bila store masih
+   * kosong — metrics kosong (semua avgGasPrice 0) DAN totalTransactions
+   * masih 0. Kedua field itu selalu di-set bersamaan oleh
+   * updateMetrics/updateFromBlock, jadi begitu ada data live apa pun guard
+   * langsung skip snapshot riwayat.
+   *
+   * Catatan: guard TIDAK lagi memakai isCollecting. Hydrate yang memanggil
+   * seedFromSnapshot berjalan async (fetch) dan selesai SETELAH mount
+   * menjalankan startCollecting() → isCollecting selalu true saat seed
+   * dipanggil, sehingga lama-kelamaan fitur seed tak pernah jalan (dead code).
+   * Pengecekan kekosongan yang sesungguhnya (isEmpty + totalTransactions)
+   * sudah cukup melindungi dari menimpa data live.
    */
   seedFromSnapshot: (snapshot) => {
-    const { isCollecting, gasMetrics, networkStats } = get()
-    if (isCollecting) return
+    const { gasMetrics, networkStats } = get()
 
-    const isEmpty = Array.from(gasMetrics.values()).every((m) => m.avgGasPrice === 0)
+    const isEmpty =
+      networkStats.totalTransactions === 0 &&
+      Array.from(gasMetrics.values()).every((m) => m.avgGasPrice === 0)
     if (!isEmpty) return
 
     const seededMetrics = new Map(gasMetrics)

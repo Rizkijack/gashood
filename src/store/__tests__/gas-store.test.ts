@@ -13,6 +13,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TxType, type ClassifiedTransaction } from '@/data/tx-classifier'
 import type { GasMetric } from '@/store/gas-store'
+import type { CategoryAggregate, GasSnapshot } from '@/data/snapshot-aggregate'
 
 type StoreModule = typeof import('@/store/gas-store')
 
@@ -272,5 +273,71 @@ describe('seleksi UI (Langkah 9)', () => {
 
     useGasStore.getState().hoverType(null)
     expect(useGasStore.getState().hoveredType).toBeNull()
+  })
+})
+
+describe('seedFromSnapshot (hydrate riwayat 24 jam)', () => {
+  /** Build GasSnapshot satu titik dengan kategori riwayat non-nol. */
+  function makeSnapshot(overrides: Partial<Record<TxType, number>> = {}): GasSnapshot {
+    const categories = {} as Record<TxType, CategoryAggregate>
+    for (const type of Object.values(TxType)) {
+      const v = overrides[type] ?? 10
+      categories[type] = {
+        avgGasUsed: 50_000,
+        avgGasPrice: v,
+        minGasPrice: v,
+        maxGasPrice: v,
+        totalTxCount: 100,
+        totalFeeEth: 0.5,
+      }
+    }
+    return {
+      t: '2026-09-05T08:15:00.000Z',
+      block: 9_000_000,
+      gasPriceGwei: 7,
+      tps: 12,
+      categories,
+    }
+  }
+
+  it('regresi: BERLAKU saat isCollecting=true bila metrics masih kosong (bug seed tak pernah jalan)', () => {
+    useGasStore.setState({ isCollecting: true }) // dsb. = App.tsx saat mount
+
+    useGasStore.getState().seedFromSnapshot(makeSnapshot())
+
+    const { gasMetrics, networkStats } = useGasStore.getState()
+    const native = gasMetrics.get(TxType.NATIVE_TRANSFER)!
+    expect(native.avgGasPrice).toBe(10)
+    expect(native.avgGasUsed).toBe(50_000)
+    expect(native.totalTxCount).toBe(100)
+    expect(native.recentTxCount).toBe(0) // riwayat ≠ data live
+    // totalTransactions ter-seed → penanda hasData non-nol untuk Dashboard
+    expect(networkStats.totalTransactions).toBe(Object.values(TxType).length * 100)
+    expect(networkStats.currentGasPrice).toBe(7)
+    expect(networkStats.tps).toBe(12)
+    expect(networkStats.lastBlockNumber).toBe(9_000_000)
+  })
+
+  it('anti-timpa: SKIP saat metrics sudah ter-populate (isCollecting=false tetap skip)', () => {
+    // Data live terisi dulu lewat updateFromBlock (men-set metrics + networkStats)
+    useGasStore
+      .getState()
+      .updateFromBlock(
+        [makeTx(TxType.NATIVE_TRANSFER, { effectiveGasPrice: 2_000_000_000n })],
+        99,
+        2_000_000_000n, // block currentGasPriceWei → networkStats.currentGasPrice = 2
+      )
+
+    const before = useGasStore.getState()
+    useGasStore.getState().seedFromSnapshot(makeSnapshot())
+
+    const { gasMetrics, networkStats } = useGasStore.getState()
+    // average dipertahankan dari data live (2 gwei), snapshot (10/semua tipe) tidak menggantikannya
+    expect(gasMetrics.get(TxType.NATIVE_TRANSFER)!.avgGasPrice).toBe(2)
+    expect(gasMetrics.get(TxType.SWAP)!.avgGasPrice).toBe(0) // tiada kategori live → tetap 0
+    expect(networkStats.currentGasPrice).toBe(2)
+    expect(networkStats.totalTransactions).toBe(1)
+    expect(networkStats.lastBlockNumber).toBe(99)
+    expect(networkStats).toEqual(before.networkStats)
   })
 })

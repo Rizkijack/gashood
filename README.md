@@ -176,7 +176,7 @@ Robinhood RPC → rpc-client → gas-collector → gas-store → 3D Scene + 2D O
 Situs ini SPA statis — polling RPC hanya berjalan saat browser terbuka. Agar grafik **riwayat 24 jam** tetap terisi 24/7, GitHub Actions menjalankan **git-scraper** secara periodik dan commit hasilnya ke repo:
 
 ```
-GitHub Actions (cron ±5 menit)
+GitHub Actions (cron ±1 jam)
   └─ bun scripts/collect-snapshot.ts   → ambil ~30 block terakhir via RPC
        └─ klasifikasi 4 kategori + agregasi (avg/min/max/count/fee, gas price, TPS)
             └─ append data/snapshots.json (dedupe by block, buang > 24 jam, cap 288 titik)
@@ -188,9 +188,9 @@ Browser (situs dibuka)
             └─ src/ui/GasHistoryChart.tsx → grafik "GAS PRICE · 24 JAM" (SVG, label WIB)
 ```
 
-- **Cara kerja**: satu snapshot = window ±30 block terakhir (~beberapa detik, block time 100 ms). Titik diambil tiap ±5 menit → rolling 24 jam ≈ 288 titik maks.
+- **Cara kerja**: satu snapshot = window ±30 block terakhir (~beberapa detik, block time 100 ms). Titik diambil tiap ±1 jam → rolling 24 jam ≈ ±24 titik.
 - **Aktifkan Actions di repo**: Settings → Actions → General → pilih *Allow all actions* / pastikan workflows tidak di-disable. Jalankan sekali manual (Actions → *Collect gas snapshots* → *Run workflow*) untuk memastikan runner berjalan.
-- **Cron GitHub bersifat best-effort**: eksekusi bisa telat beberapa menit saat antrean runner padat → granularitas efektif ±5-10 menit, tetap cukup untuk grafik 24 jam.
+- **Cadence &amp; scheduler**: scheduler GitHub Actions free-tier menunda jadwal lama — cron 5 menit dalam praktik hanya memicu ~9–10 run/hari (gap 95–273 menit), jadi cadence di-set ke **per-jam** (`0 * * * *`) agar jujur dengan kenyataan. Grafik riwayat karenanya kasar (~1 titik/jam), bukan 288 titik.
 - **Fail-safe**: kegagalan RPC membuat collector exit non-zero **tanpa menulis** file — riwayat lama tidak pernah ditimpa kosong.
 - Override URL snapshot via `VITE_SNAPSHOT_URL` (default: raw GitHub `main`).
 

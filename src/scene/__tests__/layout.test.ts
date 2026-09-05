@@ -12,18 +12,22 @@ import {
 } from '../layout'
 
 /**
- * Driver tinggi gedung berubah dari avgGasUsed → avgGasPrice (Gwei):
- * rasio user 1 Gwei = 50 m; skala dunia 1 unit ≈ 4.5 m (mobil 1.0 unit ≈
- * 4.5 m) → 1 Gwei ≈ 11.11 unit. Linear murni proporsional (tanpa
- * normalisasi seperti rumus lama), clamp 7.5–150 unit.
+ * Driver tinggi gedung berubah dari avgGasUsed → avgGasPrice (Gwei), RE-ANCHOR
+ * ke range nyata Robinhood: 0.1 Gwei dipetakan ke MIN_BUILDING_HEIGHT (7.5),
+ * naik linear dengan slope 1 Gwei = 50 m = 50/4.5 unit, clamp 7.5–150. Dipilih
+ * agar skyline bervariasi pada gas typ Robinhood (~0.1–0.5 Gwei) sekaligus
+ * spike tinggi tetap terbaca (tanpa normalisasi seperti rumus lama).
  */
-describe('buildingHeight (driver tinggi = avgGasPrice Gwei)', () => {
-  it('rasio linear 1 Gwei = 50 m = 50/4.5 unit', () => {
+describe('buildingHeight (driver tinggi = avgGasPrice Gwei, re-anchor)', () => {
+  it('re-anchor: 0.1 Gwei → MIN, naik linear @ 1 Gwei = 50 m', () => {
     expect(HEIGHT_UNITS_PER_GWEI).toBeCloseTo(50 / 4.5, 10)
-    expect(buildingHeight(1)).toBeCloseTo(50 / 4.5, 10)
-    expect(buildingHeight(2)).toBeCloseTo(100 / 4.5, 10)
-    // Proporsional murni: 2× input → 2× output (di bawah clamp).
-    expect(buildingHeight(2) / buildingHeight(1)).toBeCloseTo(2, 10)
+    // Anchor bawah: gas persuasi nyata Robinhood (0.1 Gwei) = tinggi minimum.
+    expect(buildingHeight(0.1)).toBe(MIN_BUILDING_HEIGHT)
+    // Di atas anchor: slope = HEIGHT_UNITS_PER_GWEI (1 Gwei = 50 m).
+    expect(buildingHeight(1)).toBeCloseTo(MIN_BUILDING_HEIGHT + (1 - 0.1) * (50 / 4.5), 10)
+    expect(buildingHeight(0.5)).toBeCloseTo(MIN_BUILDING_HEIGHT + 0.4 * (50 / 4.5), 10)
+    // Verifikasi slope: beda 0.1→1 Gwei (0.9 Gwei) × HEIGHT_UNITS_PER_GWEI.
+    expect(buildingHeight(1) - buildingHeight(0.1)).toBeCloseTo(0.9 * (50 / 4.5), 10)
   })
 
   it('input invalid/≤0 → MIN (idle: tidak ada data harga)', () => {
@@ -33,12 +37,12 @@ describe('buildingHeight (driver tinggi = avgGasPrice Gwei)', () => {
   })
 
   it('clamp ke MIN & MAX (headroom spike gas)', () => {
-    // 0.1 Gwei ≈ 1.11 unit < 7.5 → MIN.
-    expect(buildingHeight(0.1)).toBe(MIN_BUILDING_HEIGHT)
-    // 50 Gwei ≈ 555.5 unit > 150 → MAX.
+    // Gas di bawah anchor → dipatok MIN (tidak pernah di bawah MIN).
+    expect(buildingHeight(0.05)).toBe(MIN_BUILDING_HEIGHT)
+    // 50 Gwei ≈ 555 unit > 150 → MAX.
     expect(buildingHeight(50)).toBe(MAX_BUILDING_HEIGHT)
-    // 13.5 Gwei pas di MAX (150 unit ≈ 675 m) — batas headroom dokumentasi.
-    expect(buildingHeight(13.5)).toBeCloseTo(MAX_BUILDING_HEIGHT, 10)
+    // 13.5 Gwei ≈ 156 unit > 150 → MAX (headroom dokumentasi).
+    expect(buildingHeight(13.5)).toBe(MAX_BUILDING_HEIGHT)
   })
 })
 

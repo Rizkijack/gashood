@@ -112,9 +112,9 @@ export function GasBuilding({ txType, position }: GasBuildingProps) {
   const recentTxCount = metric?.recentTxCount ?? 0;
 
   // Height mapping — gauge gas price real-time (Blockscout gas tracker):
-  // linear 1 Gwei = 50 m = 50/4.5 unit, clamp 7.5–150 (idle/tidak ada data
-  // harga → MIN). Rumus SATU SUMBER di layout.ts — dipakai juga GasParticles
-  // agar spawn tidak pernah di dalam menara.
+  // re-anchor ke range Robinhood (0.1 Gwei → MIN 7.5), naik linear @
+  // 1 Gwei = 50m, clamp 7.5–150. Rumus SATU SUMBER di layout.ts — dipakai juga
+  // GasParticles agar spawn tidak pernah di dalam menara.
   const height = useMemo(() => buildingHeight(avgGasPrice), [avgGasPrice]);
 
   // Width mapping (BUILD_STEPS.md Langkah 12): normalize(recentTxCount, 0, 50) * 1.5 + 0.5,

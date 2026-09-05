@@ -1,19 +1,21 @@
 # Git-scraping snapshot gas 24 jam untuk GasHood.
 #
 # Situs = SPA statis: data hanya terkumpul saat browser terbuka. Workflow ini
-# menjalankan collector tiap ±5 menit lalu commit hasilnya ke
-# data/snapshots.json (rolling 24 jam, ±288 titik) — situs membaca file itu
-# saat boot untuk grafik riwayat.
+# menjalankan collector lalu commit hasilnya ke data/snapshots.json (destinasi
+# rolling 24 jam) — situs membaca file itu saat boot untuk grafik riwayat.
 #
-# CATATAN CRON: scheduler GitHub Actions bersifat best-effort — eksekusi bisa
-# telat beberapa menit saat antrean runner padat, jadi granularitas efektif
-# ±5-10 menit. Itu tetap cukup untuk grafik 24 jam.
+# CATATAN CADENCE (jujur): scheduler GitHub Actions free-tier sangat menunda
+# jadwal — cron `*/5 * * * *` (5 menit) dalam praktik hanya memicu ~9–10 run/hari
+# (gap 95–273 menit). Karena itu cron DIKURANGI ke per-jam (`0 * * * *`) agar
+# JADWAL sesuai KENYATAAN; label UI disesuaikan ke "snapshot ±1 jam". Jangan
+# naikkan ke 5 menit lagi — scheduler tetap menunda, bukan lebih presisi.
 name: Collect gas snapshots
 
 on:
   schedule:
-    # Setiap 5 menit (best-effort — lihat catatan cron di atas).
-    - cron: '*/5 * * * *'
+    # Setiap jam (bukan 5 menit — lihat catatan cadence di header workflow).
+    # `0 * * * *` = menit 0 tiap jam; scheduler tetap best-effort.
+    - cron: '0 * * * *'
   # Tombol manual: Actions → Collect gas snapshots → Run workflow.
   workflow_dispatch:
 
