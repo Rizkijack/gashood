@@ -10,6 +10,9 @@ import { Vegetation } from './Vegetation'
 import { RooftopDetails } from './BuildingFacade'
 import { RoadNetwork } from './RoadNetwork'
 import { Traffic } from './Traffic'
+import { SkyObjects } from './SkyObjects'
+import { Airplane } from './Airplane'
+import { Birds } from './Birds'
 import { CITY_SCALE, RIVER_Z } from './layout'
 
 class EnvironmentBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -495,6 +498,9 @@ export function World({ children }: WorldProps) {
       <GasParticles />
       <ResponsiveDataRiver />
       <SkyDome />
+      <SkyObjects />
+      <Airplane />
+      <Birds />
 
       {/* multisampling 2 (default 8x terlalu berat untuk mid-range @ dpr tinggi).
           enableNormalPass hanya desktop ≥1024px (kebutuhan wrapper SSAO +
