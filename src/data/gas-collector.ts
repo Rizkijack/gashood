@@ -98,6 +98,12 @@ export async function refreshEthPriceIfDue(myRun: number): Promise<void> {
     if (gasPriceGwei !== null) {
       useGasStore.getState().setBlockscoutGasPrice(gasPriceGwei)
     }
+    // Kepadatan traffic (%) dari response yang SAMA (network_utilization_percentage)
+    // — sinyal jumlah mobil di scene 3D. Zero request tambahan.
+    const utilization = stats.network_utilization_percentage
+    if (typeof utilization === 'number' && Number.isFinite(utilization) && utilization >= 0) {
+      useGasStore.getState().setTrafficDensity(utilization)
+    }
   } catch (error) {
     console.warn('[gas-collector] Gagal fetch harga ETH dari Blockscout (non-fatal):', error)
   }

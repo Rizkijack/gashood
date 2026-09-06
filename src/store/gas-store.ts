@@ -24,6 +24,8 @@ export interface NetworkStats {
   lastBlockNumber: number
   /** Harga 1 ETH dalam USD (Blockscout /stats coin_price). null = belum tersedia → UI sembunyikan bagian USD. */
   ethUsdPrice: number | null
+  /** Kepadatan lalu lintas real-time dari Blockscout (transaksi per menit). */
+  trafficDensity: number
 }
 
 export type TimeRange = '1m' | '5m' | '15m' | '1h'
@@ -58,6 +60,7 @@ export interface GasStore {
   setConsecutiveFailures: (count: number) => void
   setEthUsdPrice: (price: number | null) => void
   setBlockscoutGasPrice: (gwei: number | null) => void
+  setTrafficDensity: (density: number) => void
   clearRecentTxs: () => void
   /**
    * Hydrate dari snapshot git-scraper 24 jam (lihat data/snapshots.json).
@@ -115,6 +118,7 @@ export const useGasStore = create<GasStore>((set, get) => ({
     totalTransactions: 0,
     lastBlockNumber: 0,
     ethUsdPrice: null,
+    trafficDensity: 0,
   },
   selectedType: null,
   hoveredType: null,
@@ -202,8 +206,10 @@ export const useGasStore = create<GasStore>((set, get) => ({
         tps,
         totalTransactions: prevStats.totalTransactions + txs.length,
         lastBlockNumber: blockNumber,
-        // Harga ETH di-set terpisah (throttle 60s) — pertahankan antar update block.
+        // Harga ETH & kepadatan traffic di-set terpisah (throttle 60s) —
+        // pertahankan antar update block.
         ethUsdPrice: prevStats.ethUsdPrice,
+        trafficDensity: prevStats.trafficDensity,
       },
     })
   },
@@ -220,6 +226,12 @@ export const useGasStore = create<GasStore>((set, get) => ({
   setError: (error) => set({ error }),
   setConsecutiveFailures: (count) => set({ consecutiveFailures: count }),
   setEthUsdPrice: (price) => set((s) => ({ networkStats: { ...s.networkStats, ethUsdPrice: price } })),
+  // Kepadatan traffic (%) dari Blockscout /stats — sinyal jumlah mobil, bukan
+  // kecepatan. Ditulis hanya bila nilai valid (guard di gas-collector).
+  setTrafficDensity: (pct) => {
+    if (pct === null || pct === undefined || !Number.isFinite(pct)) return
+    set((s) => ({ networkStats: { ...s.networkStats, trafficDensity: Math.min(pct, 100) } }))
+  },
   // Hanya ditulis bila nilai valid (guard di gas-collector) — null berarti
   // belum ada data Blockscout, jangan menimpa nilai RPC fallback yang tampil.
   // Guard ini menegakkan kontrak "sticky": null tidak pernah menimpa nilai.

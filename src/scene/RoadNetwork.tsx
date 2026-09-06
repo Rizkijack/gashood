@@ -29,6 +29,20 @@ import { SPACING, CITY_SCALE, RIVER_Z } from "./layout";
 /** Half-size ring avenue (centerline) — antara tepi bangunan (±105) &
  * sidewalk (±195). POSISI ×CITY_SCALE; lebar jalan tetap skala mobil. */
 export const RING_H = 9.75 * CITY_SCALE;
+
+/* ---- Jalan Tol (Highway) --------------------------------------------------
+ * Jalan tol lebih lebar (3 lajur) di luar ring avenue, mengelilingi kota.
+ * Posisi: ±14 * CITY_SCALE (di luar ring ±9.75). Lebar 2.4 (3 lajur @ 0.8).
+ * Terhubung ke ring via on/off ramp di 4 titik (persimpangan).
+ * --------------------------------------------------------------------------- */
+export const HIGHWAY_H = 14 * CITY_SCALE; // half-size jalan tol
+export const HIGHWAY_WIDTH = 2.4; // 3 lajur (lebar skala mobil)
+export const HIGHWAY_PERIMETER = 8 * HIGHWAY_H;
+export const HIGHWAY_LANE_OFFSET = 0.8; // offset lajur dari centerline
+
+// Jalan tol horizontal (sumbu X) di z = ±HIGHWAY_H
+// Jalan tol vertikal (sumbu Z) di x = ±HIGHWAY_H
+// Terhubung ke ring via ramp pendek di persimpangan
 /** Keliling path ring (4 sisi × 2×RING_H) — domain parametrik mobil. */
 export const RING_PERIMETER = 8 * RING_H;
 /** Offset lajur dari centerline (lebar jalan 1.6 → 2 lajur @ ±0.4) — TETAP. */
@@ -172,6 +186,24 @@ function withColor(geo: THREE.BufferGeometry, hex: string): THREE.BufferGeometry
 
 const ROAD_WIDTH = 1.6; // TETAP — lebar jalan skala mobil (~5.5 m riil)
 const RING_STRIP_LEN = 2 * RING_H + ROAD_WIDTH; // stripan menutup sudut
+export const ROAD_B_Z = -90; // koridor jalan raya biasa B (sejajar X)
+export const ROAD_C_Z = 90; // koridor jalan raya biasa C (sejajar X)
+export const ROAD_END_X = 9.75 * CITY_SCALE; // ujung x jalan raya (= RING_H, menyambung ring)
+export const TOLL_X = 60; // centerline tol (sejajar Z), koridor antara gedung x=30 & x=90
+export const TOLL_DECK_Y = 6; // tinggi dek tol di atas tanah
+export const TOLL_HALF_LEN = 180; // z ∈ [-180, +180]
+export const TOLL_LANE_OFFSET = 0.8; // offset lajur tol dari centerline
+const TOLL_GANTRY_Z = [-120, 120]; // z gerbang tol
+// Zona z di mana PILAR tol TIDAK boleh berdiri: ring avenue (±RING_H),
+// jalan raya biasa (±90), koridor jalan World (ROAD_Z) & sungai (RIVER_Z).
+const TOLL_PILLAR_SKIP: [number, number][] = [
+  [-90 - 5, -90 + 5],
+  [90 - 5, 90 + 5],
+  [RIVER_Z - 5, RIVER_Z + 5],
+  [ROAD_Z - 5, ROAD_Z + 5],
+  [-RING_H - 5, -RING_H + 5],
+  [RING_H - 5, RING_H + 5],
+];
 /* Offset-y lapisan jalan ×CITY_SCALE — alasan sama dengan World.tsx
  * (offset mikrometer z-fight di depth 24-bit jarak kota). Urutan di atas
  * plaza World (0.075) & jalan World (0.12):
@@ -264,11 +296,12 @@ export function RoadNetwork() {
     return { asphalt, concrete, marking, crosswalk, lamp };
   }, []);
 
-  // Geometri merged — aspal ring (4 strip), marka (6 strip), zebra (4), jembatan (6 box).
+  // Geometri merged — aspal ring (4 strip), jalan tol (4 strip), marka, zebra, jembatan.
   const geos = useMemo(() => {
     const vScale = RING_STRIP_LEN / DASH_CYCLE;
 
     const asphaltParts: THREE.BufferGeometry[] = [];
+    // Ring avenue — 4 strip
     for (const sx of [-1, 1])
       asphaltParts.push(
         flatStrip(ROAD_WIDTH, RING_STRIP_LEN, sx * RING_H, 0, ASPHALT_Y_V, false, vScale),
@@ -277,12 +310,31 @@ export function RoadNetwork() {
       asphaltParts.push(
         flatStrip(ROAD_WIDTH, RING_STRIP_LEN, 0, sz * RING_H, ASPHALT_Y_H, true, vScale),
       );
+    // Jalan tol (highway) — 4 strip lebih lebar di luar ring
+    const HW_STRIP_LEN = 2 * HIGHWAY_H + HIGHWAY_WIDTH;
+    const hwVScale = HW_STRIP_LEN / DASH_CYCLE;
+    for (const sx of [-1, 1])
+      asphaltParts.push(
+        flatStrip(HIGHWAY_WIDTH, HW_STRIP_LEN, sx * HIGHWAY_H, 0, ASPHALT_Y_V + 0.002, false, hwVScale),
+      );
+    for (const sz of [-1, 1])
+      asphaltParts.push(
+        flatStrip(HIGHWAY_WIDTH, HW_STRIP_LEN, 0, sz * HIGHWAY_H, ASPHALT_Y_H + 0.002, true, hwVScale),
+      );
+    // Jalan raya biasa B & C — sejajar X, ujung x = ROAD_END_X (sambung ring).
+    asphaltParts.push(flatStrip(ROAD_WIDTH, ROAD_END_X * 2, 0, ROAD_B_Z, ASPHALT_Y_H, true, vScale));
+    asphaltParts.push(flatStrip(ROAD_WIDTH, ROAD_END_X * 2, 0, ROAD_C_Z, ASPHALT_Y_H, true, vScale));
     const asphalt = mergeGeometries(asphaltParts, false)!;
     asphaltParts.forEach((g) => g.dispose());
 
     const markingParts = MARKING_SEGMENTS.map((s) =>
       flatStrip(ROAD_WIDTH, s.len, s.x, s.z, MARKING_Y, s.horizontal, s.len / DASH_CYCLE),
     );
+    // Marka jalan raya biasa B & C (garis tepi + tengah putus).
+    markingParts.push(flatStrip(ROAD_WIDTH, ROAD_END_X * 2, 0, ROAD_B_Z, MARKING_Y, true, (ROAD_END_X * 2) / DASH_CYCLE));
+    markingParts.push(flatStrip(ROAD_WIDTH, ROAD_END_X * 2, 0, ROAD_C_Z, MARKING_Y, true, (ROAD_END_X * 2) / DASH_CYCLE));
+    // Marka dek tol (garis tepi + tengah) — memanjang sumbu Z di x=TOLL_X.
+    markingParts.push(flatStrip(3.2, TOLL_HALF_LEN * 2, TOLL_X, 0, TOLL_DECK_Y + 0.015, false, (TOLL_HALF_LEN * 2) / DASH_CYCLE));
     const marking = mergeGeometries(markingParts, false)!;
     markingParts.forEach((g) => g.dispose());
 
@@ -314,38 +366,66 @@ export function RoadNetwork() {
     const DECK_CONTACT = 0.07;
     const DECK_Z0 = RIVER_Z - BRIDGE_ZONE_HALF;
     const bridgeParts: THREE.BufferGeometry[] = [];
-    for (const sx of [-1, 1]) {
-      for (let i = 0; i < DECK_SEGMENTS; i++) {
-        const z0 = DECK_Z0 + i * DECK_SEG_LEN;
-        const z1 = z0 + DECK_SEG_LEN;
-        const zc = (z0 + z1) / 2;
-        // Chord antara lift ujung-ujung → top dek kontinu antar segmen.
-        const y0 = bridgeHeightAt(z0) + DECK_CONTACT;
-        const y1 = bridgeHeightAt(z1) + DECK_CONTACT;
-        const topMid = (y0 + y1) / 2;
-        const angle = Math.atan((y1 - y0) / DECK_SEG_LEN);
-        // Panjang box dikoreksi 1/cos agar proyeksi horizontal = DECK_SEG_LEN
-        // (ujung segmen tepat bertemu di z0/z1 — tanpa celah).
-        const segLen = DECK_SEG_LEN / Math.cos(angle);
-        bridgeParts.push(
-          new THREE.BoxGeometry(2.2, DECK_THICK, segLen)
-            .rotateX(-angle)
-            .translate(sx * RING_H, topMid - DECK_THICK / 2, zc),
-        );
-        bridgeParts.push(
-          new THREE.BoxGeometry(0.06, 0.12, segLen)
-            .rotateX(-angle)
-            .translate(sx * RING_H - 1.07, topMid + 0.06, zc),
-        );
-        bridgeParts.push(
-          new THREE.BoxGeometry(0.06, 0.12, segLen)
-            .rotateX(-angle)
-            .translate(sx * RING_H + 1.07, topMid + 0.06, zc),
-        );
+    // Jembatan dibangun di KEDUA ring (avenue & highway luar) — keduanya
+    // melintasi sungai pada sisi vertikal (x = ±H, z ≈ RIVER_Z).
+    for (const ringR of [RING_H, HIGHWAY_H]) {
+      for (const sx of [-1, 1]) {
+        for (let i = 0; i < DECK_SEGMENTS; i++) {
+          const z0 = DECK_Z0 + i * DECK_SEG_LEN;
+          const z1 = z0 + DECK_SEG_LEN;
+          const zc = (z0 + z1) / 2;
+          // Chord antara lift ujung-ujung → top dek kontinu antar segmen.
+          const y0 = bridgeHeightAt(z0) + DECK_CONTACT;
+          const y1 = bridgeHeightAt(z1) + DECK_CONTACT;
+          const topMid = (y0 + y1) / 2;
+          const angle = Math.atan((y1 - y0) / DECK_SEG_LEN);
+          // Panjang box dikoreksi 1/cos agar proyeksi horizontal = DECK_SEG_LEN
+          // (ujung segmen tepat bertemu di z0/z1 — tanpa celah).
+          const segLen = DECK_SEG_LEN / Math.cos(angle);
+          bridgeParts.push(
+            new THREE.BoxGeometry(2.2, DECK_THICK, segLen)
+              .rotateX(-angle)
+              .translate(sx * ringR, topMid - DECK_THICK / 2, zc),
+          );
+          bridgeParts.push(
+            new THREE.BoxGeometry(0.06, 0.12, segLen)
+              .rotateX(-angle)
+              .translate(sx * ringR - 1.07, topMid + 0.06, zc),
+          );
+          bridgeParts.push(
+            new THREE.BoxGeometry(0.06, 0.12, segLen)
+              .rotateX(-angle)
+              .translate(sx * ringR + 1.07, topMid + 0.06, zc),
+          );
+        }
       }
     }
     const bridge = mergeGeometries(bridgeParts, false)!;
     bridgeParts.forEach((g) => g.dispose());
+
+    // Jalan tol viaduct — sejajar sumbu Z di x=TOLL_X, dek di ketinggian
+    // TOLL_DECK_Y (lebar 3.2 utk 2 lajur). Dek + pilar + gerbang tol digabung
+    // → 1 draw call (material mats.concrete).
+    const tollParts: THREE.BufferGeometry[] = [];
+    // Dek — tengah box di y = TOLL_DECK_Y - 0.25 agar permukaan atas ≈ TOLL_DECK_Y.
+    tollParts.push(
+      new THREE.BoxGeometry(3.2, 0.5, TOLL_HALF_LEN * 2).translate(TOLL_X, TOLL_DECK_Y - 0.25, 0),
+    );
+    // Pilar — tiap 12 unit, di-skip di zona TOLL_PILLAR_SKIP.
+    for (let z = -TOLL_HALF_LEN + 6; z < TOLL_HALF_LEN - 4; z += 12) {
+      if (TOLL_PILLAR_SKIP.some(([a, b]) => z >= a && z <= b)) continue;
+      tollParts.push(
+        new THREE.BoxGeometry(0.8, TOLL_DECK_Y - 0.5, 0.8).translate(TOLL_X, (TOLL_DECK_Y - 0.5) / 2, z),
+      );
+    }
+    // Gerbang tol di TOLL_GANTRY_Z — balok melintang di atas dek.
+    for (const gz of TOLL_GANTRY_Z) {
+      tollParts.push(
+        new THREE.BoxGeometry(4.4, 0.4, 0.4).translate(TOLL_X, TOLL_DECK_Y + 1.4, gz),
+      );
+    }
+    const toll = mergeGeometries(tollParts, false)!;
+    tollParts.forEach((g) => g.dispose());
 
     // Lampu: tiang (cylinder) + kepala (box), warna per-vertex, 1 InstancedMesh.
     const pole = withColor(
@@ -357,7 +437,7 @@ export function RoadNetwork() {
     pole.dispose();
     head.dispose();
 
-    return { asphalt, marking, crosswalk, bridge, lamp };
+    return { asphalt, marking, crosswalk, bridge, toll, lamp };
   }, []);
 
   // Matriks lampu di-set SEKALI saat mount — statis, tanpa per-frame update.
@@ -385,6 +465,8 @@ export function RoadNetwork() {
       <mesh geometry={geos.crosswalk} material={mats.crosswalk} renderOrder={1} />
       {/* Jembatan melintang sungai — merged dek + pagar, 1 draw call */}
       <mesh geometry={geos.bridge} material={mats.concrete} castShadow receiveShadow />
+      {/* Jalan tol viaduct — merged dek + pilar + gerbang, 1 draw call */}
+      <mesh geometry={geos.toll} material={mats.concrete} castShadow receiveShadow />
       {/* Lampu jalan — 1 InstancedMesh (tiang + kepala, vertex color) */}
       <instancedMesh
         ref={lampRef}

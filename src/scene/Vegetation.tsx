@@ -89,6 +89,18 @@ function isInExclusionZone(x: number, z: number): boolean {
     }
   }
 
+  // 5. Ring highway luar (jalan tol keliling, RoadNetwork.HIGHWAY_H) — band
+  //    di x=±HIGHWAY_H & z=±HIGHWAY_H. Duplikasi sadar (RoadNetwork tidak
+  //    di-import agar bebas circular).
+  const HIGHWAY_HALF = 14 * CITY_SCALE;
+  const HW_BAND = 4; // setengah lebar jalan (1.2) + margin bahu
+  if (
+    Math.abs(Math.abs(x) - HIGHWAY_HALF) < HW_BAND ||
+    Math.abs(Math.abs(z) - HIGHWAY_HALF) < HW_BAND
+  ) {
+    return true;
+  }
+
   return false;
 }
 

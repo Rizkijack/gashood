@@ -8,25 +8,34 @@ import {
   LANE_OFFSET,
   ROAD_Z,
   ROAD_HALF_LEN,
-  ROAD_PATH_LEN,
   bridgeHeightAt,
+  HIGHWAY_H,
+  HIGHWAY_PERIMETER,
+  HIGHWAY_LANE_OFFSET,
+  ROAD_B_Z,
+  ROAD_C_Z,
+  ROAD_END_X,
+  TOLL_X,
+  TOLL_DECK_Y,
+  TOLL_HALF_LEN,
+  TOLL_LANE_OFFSET,
 } from "./RoadNetwork";
 
 /* ---------------------------------------------------------------------------
- * Traffic — lalu-lalang mobil di ring avenue + jalan lurus ROAD_Z
- * (-SPACING/2, mirror koridor sungai).
+ * Traffic — lalu-lalang mobil di: ring avenue, 3 jalan lurus biasa
+ * (ROAD_Z, ROAD_B_Z, ROAD_C_Z), ring highway luar (jalan tol keliling) &
+ * viaduct tol (x=TOLL_X). Semua mengikuti skala kota dari RoadNetwork.
  *
- * Konsep: kota hidup mengikuti aktivitas jaringan — kecepatan mobil = BASE
- * dikali faktor TPS dari useGasStore (selector granular s.networkStats.tps),
- * konsisten dengan DataRiver (speed-nya TPS). Clamp [0.5x, 3x].
- *
- * Kinerja (kontrak WAJIB):
- * - 48 mobil = 2 draw call (bodi + kabin, keduanya InstancedMesh).
- * - SATU useFrame untuk SEMUA mobil; 0 alokasi per frame (dummy Object3D +
- *   objek pose di-reuse, setMatrixAt in-place).
- * - Posisi parametrik: keliling persegi ring (linear per segmen) + jalan
- *   lurus ROAD_Z; wrap-around muncul di persimpangan (terbaca sebagai belok).
- * - Roda & lampu mobil di-skip (skala terlalu kecil / langit dinamis).
+ * KONSEP KEPADATAN (baru):
+ * - Jumlah mobil AKTIF per jalur mengikuti `networkStats.trafficDensity`
+ *   (0-100, dari Blockscout /stats network_utilization_percentage, poll 1×/60s
+ *   oleh gas-collector). Makin ramai jaringan blockchain → makin ramai mobil.
+ * - Kecepatan mobil TIDAK berubah (BASE_SPEED tetap; faktor TPS dihapus —
+ *   kepadatan kini murni via jumlah mobil).
+ * - Transisi halus: intensitas di-lerp 0.03/frame (tanpa pop saat Blockscout
+ *   update), jumlah aktif per jalur di-round dari intensitas.
+ * - Mobil non-aktif tetap dalam InstancedMesh (skala 0, y=-100) — tanpa
+ *   remount, tanpa alokasi per frame.
  * ------------------------------------------------------------------------- */
 
 /** PRNG deterministik mulberry32 — identik dengan implementasi Vegetation. */
@@ -40,14 +49,36 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-const RING_CARS_PER_DIR = 20; // ×2 arah = 40 mobil ring
-const ROAD_CARS_PER_DIR = 4; // ×2 arah = 8 mobil jalan lurus ROAD_Z
-const TOTAL_CARS = RING_CARS_PER_DIR * 2 + ROAD_CARS_PER_DIR * 2; // 48
+/** ID jalur — urutan sama dengan konfigurasi PATHS di bawah. */
+const PATH = {
+  RING: 0,
+  ROAD_Z: 1,
+  ROAD_B: 2,
+  ROAD_C: 3,
+  HIGHWAY: 4,
+  TOLL: 5,
+} as const;
 
-const BASE_SPEED = 2.2; // unit/s pada faktor 1.0x — TETAP (≈36 km/jam riil,
-// realistis terhadap mobil); keliling ring baru (×CITY_SCALE) ±531 dtk
+type PathKey = (typeof PATH)[keyof typeof PATH];
+
+/** Konfigurasi jalur: total instance, rentang mobil aktif (min..max). */
+const PATHS: Record<PathKey, { count: number; min: number; max: number }> = {
+  [PATH.RING]: { count: 40, min: 16, max: 40 },
+  [PATH.ROAD_Z]: { count: 8, min: 2, max: 8 },
+  [PATH.ROAD_B]: { count: 8, min: 2, max: 8 },
+  [PATH.ROAD_C]: { count: 8, min: 2, max: 8 },
+  [PATH.HIGHWAY]: { count: 24, min: 6, max: 24 },
+  [PATH.TOLL]: { count: 16, min: 4, max: 16 },
+};
+
+const PATH_KEYS = Object.values(PATH) as PathKey[];
+const TOTAL_CARS = PATH_KEYS.reduce<number>((sum, k) => sum + PATHS[k].count, 0); // 104
+
+const BASE_SPEED = 2.2; // unit/s — TETAP (≈36 km/jam riil); kepadatan via jumlah
 const ROAD_SURFACE_Y = 0.02;
 const MAX_DELTA = 0.1; // guard lompatan saat tab di-background
+/** Kepadatan minimum yang berarti — di bawah ini semua jalur pakai `min`. */
+const DENSITY_FLOOR = 0.05;
 
 /** Palet sipil 7 warna + taksi kuning (~15% mobil). */
 const CIVILIAN_COLORS = ["#b8434a", "#4a6fb8", "#d8d8d8", "#3c414c", "#4f7a58", "#c67b3b", "#8a8f99"].map(
@@ -56,8 +87,8 @@ const CIVILIAN_COLORS = ["#b8434a", "#4a6fb8", "#d8d8d8", "#3c414c", "#4f7a58", 
 const TAXI_COLOR = new THREE.Color("#e3c23c");
 
 interface CarSpec {
-  path: 0 | 1; // 0 = ring avenue, 1 = jalan lurus ROAD_Z
-  dir: 1 | -1; // arah keliling / lintasan
+  path: PathKey;
+  dir: 1 | -1;
   s0: number; // offset awal sepanjang path
   scale: number; // variasi ukuran 0.9–1.1
   color: THREE.Color;
@@ -65,19 +96,17 @@ interface CarSpec {
 
 interface Pose {
   x: number;
+  y: number; // permukaan jalan (ground 0.02, dek tol TOLL_DECK_Y+0.02)
   z: number;
   angle: number;
-  lift: number;
 }
 
-/** Pose parametrik ring (keliling persegi, linear per segmen, kanan sesuai arah).
- * dir=+1: sisi timur utara → utara barat → selatan barat → timur selatan (CCW).
- * dir=-1: traversal terbalik. Lajur: offset "keep right" → 2 lajur berlawanan. */
-function ringPose(sRaw: number, dir: 1 | -1, out: Pose): void {
-  let s = sRaw % RING_PERIMETER;
-  if (s < 0) s += RING_PERIMETER;
-  const t = dir === 1 ? s : RING_PERIMETER - s;
-  const segLen = 2 * RING_H;
+/** Pose parametrik ring (avenue / highway luar) — keliling persegi, kanan. */
+function ringPose(sRaw: number, dir: 1 | -1, halfH: number, laneOffset: number, perimeter: number, y: number, out: Pose): void {
+  let s = sRaw % perimeter;
+  if (s < 0) s += perimeter;
+  const t = dir === 1 ? s : perimeter - s;
+  const segLen = 2 * halfH;
   const seg = Math.min(3, Math.floor(t / segLen));
   const u = t - seg * segLen;
   let x = 0;
@@ -85,20 +114,20 @@ function ringPose(sRaw: number, dir: 1 | -1, out: Pose): void {
   let hx = 0;
   let hz = 0;
   if (seg === 0) {
-    x = RING_H;
-    z = -RING_H + u;
+    x = halfH;
+    z = -halfH + u;
     hz = 1;
   } else if (seg === 1) {
-    x = RING_H - u;
-    z = RING_H;
+    x = halfH - u;
+    z = halfH;
     hx = -1;
   } else if (seg === 2) {
-    x = -RING_H;
-    z = RING_H - u;
+    x = -halfH;
+    z = halfH - u;
     hz = -1;
   } else {
-    x = -RING_H + u;
-    z = -RING_H;
+    x = -halfH + u;
+    z = -halfH;
     hx = 1;
   }
   if (dir === -1) {
@@ -106,55 +135,68 @@ function ringPose(sRaw: number, dir: 1 | -1, out: Pose): void {
     hz = -hz;
   }
   // Right vector heading (hx,hz) pada bidang XZ = (hz, -hx) → lajur kanan.
-  x += hz * LANE_OFFSET;
-  z += -hx * LANE_OFFSET;
-  out.x = x;
-  out.z = z;
-  out.angle = Math.atan2(hx, hz);
+  out.x = x + hz * laneOffset;
+  out.z = z + -hx * laneOffset;
   // Lift jembatan hanya di sisi vertikal (melintang sungai RIVER_Z).
-  out.lift = seg === 0 || seg === 2 ? bridgeHeightAt(z) : 0;
+  out.y = y + (seg === 0 || seg === 2 ? bridgeHeightAt(out.z) : 0);
+  out.angle = Math.atan2(hx, hz);
 }
 
-/** Pose jalan lurus ROAD_Z (x ∈ [-ROAD_HALF_LEN, ROAD_HALF_LEN]) — ujung
- * path tepat di persimpangan ring, sehingga wrap-around terbaca sebagai
- * mobil berbelok, bukan pop. */
-function roadPose(sRaw: number, dir: 1 | -1, out: Pose): void {
-  let s = sRaw % ROAD_PATH_LEN;
-  if (s < 0) s += ROAD_PATH_LEN;
-  const t = dir === 1 ? s : ROAD_PATH_LEN - s;
-  out.x = -ROAD_HALF_LEN + t;
-  out.z = ROAD_Z + (dir === 1 ? -LANE_OFFSET : LANE_OFFSET);
+/** Pose jalan lurus sejajar X (ROAD_Z / ROAD_B_Z / ROAD_C_Z) — wrap di ujung. */
+function straightXPose(sRaw: number, dir: 1 | -1, zCorridor: number, halfLen: number, out: Pose): void {
+  const pathLen = 2 * halfLen;
+  let s = sRaw % pathLen;
+  if (s < 0) s += pathLen;
+  const t = dir === 1 ? s : pathLen - s;
+  const lane = dir === 1 ? -LANE_OFFSET : LANE_OFFSET;
+  out.x = -halfLen + t;
+  out.y = ROAD_SURFACE_Y;
+  out.z = zCorridor + lane;
   out.angle = Math.atan2(dir, 0);
-  out.lift = 0;
 }
 
-/** Spesifikasi 48 mobil — deterministik (seed tetap), sebaran merata per lajur. */
+/** Pose viaduct tol — sejajar Z di x=TOLL_X, ketinggian dek (konstan). */
+function tollPose(sRaw: number, dir: 1 | -1, out: Pose): void {
+  const pathLen = 2 * TOLL_HALF_LEN;
+  let s = sRaw % pathLen;
+  if (s < 0) s += pathLen;
+  const t = dir === 1 ? s : pathLen - s;
+  out.x = TOLL_X + (dir === 1 ? -TOLL_LANE_OFFSET : TOLL_LANE_OFFSET);
+  out.y = TOLL_DECK_Y + ROAD_SURFACE_Y;
+  out.z = -TOLL_HALF_LEN + t;
+  out.angle = dir === 1 ? 0 : Math.PI;
+}
+
+/** Panjang domain parametrik per jalur (untuk sebar awal mobil). */
+function pathLength(key: PathKey): number {
+  if (key === PATH.RING) return RING_PERIMETER;
+  if (key === PATH.HIGHWAY) return HIGHWAY_PERIMETER;
+  if (key === PATH.TOLL) return TOLL_HALF_LEN * 2;
+  if (key === PATH.ROAD_Z) return ROAD_HALF_LEN * 2;
+  return ROAD_END_X * 2; // ROAD_B & ROAD_C
+}
+
+/** Spesifikasi semua mobil — deterministik (seed tetap), merata per jalur. */
 function generateCars(): CarSpec[] {
   const rnd = mulberry32(20260903);
   const cars: CarSpec[] = [];
   const gapJitter = (max: number) => (rnd() - 0.5) * 2 * max;
 
-  for (let i = 0; i < RING_CARS_PER_DIR * 2; i++) {
-    const dir: 1 | -1 = i % 2 === 0 ? 1 : -1;
-    const laneIdx = Math.floor(i / 2);
-    cars.push({
-      path: 0,
-      dir,
-      s0: (laneIdx + 0.5) * (RING_PERIMETER / RING_CARS_PER_DIR) + gapJitter(0.9),
-      scale: 0.9 + rnd() * 0.2,
-      color: rnd() < 0.15 ? TAXI_COLOR : CIVILIAN_COLORS[Math.floor(rnd() * CIVILIAN_COLORS.length)],
-    });
-  }
-  for (let i = 0; i < ROAD_CARS_PER_DIR * 2; i++) {
-    const dir: 1 | -1 = i % 2 === 0 ? 1 : -1;
-    const laneIdx = Math.floor(i / 2);
-    cars.push({
-      path: 1,
-      dir,
-      s0: (laneIdx + 0.5) * (ROAD_PATH_LEN / ROAD_CARS_PER_DIR) + gapJitter(1.0),
-      scale: 0.9 + rnd() * 0.2,
-      color: rnd() < 0.15 ? TAXI_COLOR : CIVILIAN_COLORS[Math.floor(rnd() * CIVILIAN_COLORS.length)],
-    });
+  for (const key of PATH_KEYS) {
+    const cfg = PATHS[key];
+    const perDir = cfg.count / 2;
+    const spread = pathLength(key);
+    for (let i = 0; i < cfg.count; i++) {
+      const dir: 1 | -1 = i % 2 === 0 ? 1 : -1;
+      const laneIdx = Math.floor(i / 2);
+      cars.push({
+        path: key,
+        dir,
+        s0: (laneIdx + 0.5) * (spread / perDir) + gapJitter(0.9),
+        scale: 0.9 + rnd() * 0.2,
+        color: rnd() < 0.15 ? TAXI_COLOR : CIVILIAN_COLORS[Math.floor(rnd() * CIVILIAN_COLORS.length)],
+      });
+    }
   }
   return cars;
 }
@@ -163,9 +205,11 @@ export function Traffic() {
   const bodyRef = useRef<THREE.InstancedMesh>(null);
   const cabinRef = useRef<THREE.InstancedMesh>(null);
 
-  // TPS dibaca granular (primitive) — re-render hanya saat nilainya berubah,
-  // useFrame membaca lewat closure (pola sama dengan DataRiver).
-  const tps = useGasStore((s) => s.networkStats.tps);
+  // Kepadatan target (0-100) — dari Blockscout utilization (poll 60s).
+  const density = useGasStore((s) => s.networkStats.trafficDensity);
+
+  // Intensitas halus (lerp per frame) — hindari pop saat Blockscout update.
+  const intensityRef = useRef(0.5);
 
   const cars = useMemo(generateCars, []);
 
@@ -197,7 +241,7 @@ export function Traffic() {
   }, [cars]);
 
   // SATU useFrame untuk semua mobil — 0 alokasi (pose & dummy di-reuse).
-  const pose = useMemo<Pose>(() => ({ x: 0, z: 0, angle: 0, lift: 0 }), []);
+  const pose = useMemo<Pose>(() => ({ x: 0, y: 0, z: 0, angle: 0 }), []);
   const dummy = useMemo(() => new THREE.Object3D(), []);
 
   useFrame((_, delta) => {
@@ -205,22 +249,54 @@ export function Traffic() {
     const cabin = cabinRef.current;
     if (!body || !cabin) return;
 
-    const safeTps = Number.isFinite(tps) ? tps : 0;
-    const factor = Math.min(Math.max(0.5 + safeTps / 10, 0.5), 3); // clamp 0.5x–3x
+    // Lerp halus intensitas (0.03/frame) menuju target kepadatan store.
+    const target = Math.min(Math.max(density / 100, DENSITY_FLOOR), 1);
+    intensityRef.current += (target - intensityRef.current) * 0.03;
+    const intensity = intensityRef.current;
+
     const d = delta > MAX_DELTA ? MAX_DELTA : delta;
 
-    for (let i = 0; i < cars.length; i++) {
-      const c = cars[i];
-      c.s0 += BASE_SPEED * factor * d;
-      if (c.path === 0) ringPose(c.s0, c.dir, pose);
-      else roadPose(c.s0, c.dir, pose);
+    let i = 0;
+    for (const key of PATH_KEYS) {
+      const cfg = PATHS[key];
+      const activeNow = Math.round(cfg.min + (cfg.max - cfg.min) * intensity);
 
-      dummy.position.set(pose.x, ROAD_SURFACE_Y + pose.lift, pose.z);
-      dummy.rotation.set(0, pose.angle, 0);
-      dummy.scale.set(c.scale, c.scale, c.scale);
-      dummy.updateMatrix();
-      body.setMatrixAt(i, dummy.matrix);
-      cabin.setMatrixAt(i, dummy.matrix);
+      for (let j = 0; j < cfg.count; j++, i++) {
+        const c = cars[i];
+        c.s0 += BASE_SPEED * d; // kecepatan TETAP — kepadatan via jumlah mobil
+
+        if (j >= activeNow) {
+          // Non-aktif: sembunyikan (skala 0) — tanpa remount, tanpa alokasi.
+          dummy.position.set(0, -100, 0);
+          dummy.rotation.set(0, 0, 0);
+          dummy.scale.setScalar(0);
+          dummy.updateMatrix();
+          body.setMatrixAt(i, dummy.matrix);
+          cabin.setMatrixAt(i, dummy.matrix);
+          continue;
+        }
+
+        if (key === PATH.RING) {
+          ringPose(c.s0, c.dir, RING_H, LANE_OFFSET, RING_PERIMETER, ROAD_SURFACE_Y, pose);
+        } else if (key === PATH.HIGHWAY) {
+          ringPose(c.s0, c.dir, HIGHWAY_H, HIGHWAY_LANE_OFFSET, HIGHWAY_PERIMETER, ROAD_SURFACE_Y, pose);
+        } else if (key === PATH.TOLL) {
+          tollPose(c.s0, c.dir, pose);
+        } else if (key === PATH.ROAD_Z) {
+          straightXPose(c.s0, c.dir, ROAD_Z, ROAD_HALF_LEN, pose);
+        } else if (key === PATH.ROAD_B) {
+          straightXPose(c.s0, c.dir, ROAD_B_Z, ROAD_END_X, pose);
+        } else {
+          straightXPose(c.s0, c.dir, ROAD_C_Z, ROAD_END_X, pose);
+        }
+
+        dummy.position.set(pose.x, pose.y, pose.z);
+        dummy.rotation.set(0, pose.angle, 0);
+        dummy.scale.set(c.scale, c.scale, c.scale);
+        dummy.updateMatrix();
+        body.setMatrixAt(i, dummy.matrix);
+        cabin.setMatrixAt(i, dummy.matrix);
+      }
     }
     body.instanceMatrix.needsUpdate = true;
     cabin.instanceMatrix.needsUpdate = true;

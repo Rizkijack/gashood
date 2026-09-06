@@ -50,6 +50,7 @@ function makeInitialState() {
       totalTransactions: 0,
       lastBlockNumber: 0,
       ethUsdPrice: null,
+      trafficDensity: 0,
     },
     blockscoutGasPrice: null as number | null,
     selectedType: null as TxType | null,
