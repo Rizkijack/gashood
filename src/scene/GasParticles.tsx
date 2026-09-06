@@ -187,7 +187,7 @@ export function GasParticles() {
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
   })
 
-  useMemo(() => {
+  useEffect(() => {
     particles.current = Array.from({ length: MAX_PARTICLES }, () => ({
       position: new THREE.Vector3(0, -100, 0),
       velocity: new THREE.Vector3(0, 0, 0),

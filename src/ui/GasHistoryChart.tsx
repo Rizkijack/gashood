@@ -147,6 +147,9 @@ export function GasHistoryChart() {
   const lastX = xAt(data.length - 1);
   const lastY = yAt(last.gasPriceGwei);
 
+  // Titik live digeser ke kanan agar tidak menumpuk titik snapshot terakhir.
+  const liveX = Math.min(lastX + 10, width - 4);
+
   return (
     <div ref={wrapRef} style={styles.wrap}>
       <div style={styles.header}>
@@ -200,22 +203,27 @@ export function GasHistoryChart() {
           {niceNumber(last.gasPriceGwei)}
         </text>
 
-        {/* Titik nilai kini (live, ujung kanan) — hanya bila polling live sudah punya nilai */}
-        {currentGasPrice > 0 && (
-          <>
-            <circle cx={lastX} cy={yAt(currentGasPrice)} r={3} fill="#00FF88" />
-            <text
-              x={lastX - 6}
-              y={Math.max(yAt(currentGasPrice) - 8, 10)}
-              textAnchor="end"
-              fontSize={9}
-              fill="#00FF88"
-              fontFamily="ui-monospace, monospace"
-            >
-              {niceNumber(currentGasPrice)}
-            </text>
-          </>
-        )}
+        {/* Titik nilai kini (live) — digeser ke kanan dari titik snapshot terakhir, dihubungkan garis putus-putus (snapshot → sekarang) */}
+        {currentGasPrice > 0 &&
+          (() => {
+            const liveY = yAt(currentGasPrice);
+            return (
+              <>
+                <line x1={lastX} y1={lastY} x2={liveX} y2={liveY} stroke="#00FF88" strokeWidth={1} strokeDasharray="2 2" opacity={0.6} />
+                <circle cx={liveX} cy={liveY} r={3} fill="#00FF88" />
+                <text
+                  x={liveX - 6}
+                  y={Math.max(liveY - 8, 10)}
+                  textAnchor="end"
+                  fontSize={9}
+                  fill="#00FF88"
+                  fontFamily="ui-monospace, monospace"
+                >
+                  {niceNumber(currentGasPrice)}
+                </text>
+              </>
+            );
+          })()}
       </svg>
     </div>
   );
